@@ -1,4 +1,4 @@
-import { TEAMS, TEAM_NAMES, PLAYERS_RAW } from "../data/rawData.js";
+import { TEAMS, TEAM_NAMES, PLAYERS_RAW, COACHES } from "../data/rawData.js";
 import { clamp } from "./mathHelpers.js";
 import { SALARY_CAP, teamPayroll } from "./contracts.js";
 import { avgOverallByPosition, weakestPosition, strongestPosition } from "./ratings.js";

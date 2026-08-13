@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 import {
-  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME, PRISTINE_YEAR1,
+  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME,
 } from "./data/rawData.js";
 import { migrateLSMIfNeeded } from "./data/migrations.js";
+import { resetLeagueDataToYear1 } from "./data/reset.js";
 import { formatMoney, rand } from "./engine/mathHelpers.js";
 import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll, capFine, bootstrapContractsIfNeeded } from "./engine/contracts.js";
 import { avgOverallByPosition } from "./engine/ratings.js";
@@ -620,17 +621,7 @@ export default function VPLLSimulator() {
 
   const resetLeagueToYear1 = useCallback(async () => {
     // restore every mutable team/coach/player field to the pristine Year 1 snapshot
-    const fresh = JSON.parse(JSON.stringify(PRISTINE_YEAR1));
-    for (const t of TEAM_NAMES) {
-      Object.keys(TEAMS[t]).forEach((k) => delete TEAMS[t][k]);
-      Object.assign(TEAMS[t], fresh.teams[t]);
-      Object.keys(COACHES[t]).forEach((k) => delete COACHES[t][k]);
-      Object.assign(COACHES[t], fresh.coaches[t]);
-      PLAYERS_RAW[t].length = 0;
-      PLAYERS_RAW[t].push(...fresh.players[t]);
-    }
-    bootstrapContractsIfNeeded();
-    migrateLSMIfNeeded();
+    resetLeagueDataToYear1();
 
     setSeasons({ corkum: null, culkin: null });
     setYearNumber(1);
