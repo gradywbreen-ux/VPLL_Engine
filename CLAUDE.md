@@ -106,19 +106,44 @@ calling it done.
 
 ## Testing workflow used throughout this project
 
-There's no formal test suite yet (a real one is a great first contribution). The pattern used
-manually every session:
-1. Extract the pure-logic portion of the file (everything between `const RAW_DATA` and the
-   `DESIGN TOKENS` comment) into a standalone `.js` file
-2. Append a Node test script exercising the specific system being changed
-3. Run with plain `node`, inspect output by hand
-4. Validate the full JSX still compiles with `esbuild --jsx=automatic`
-5. Grep for duplicate function/component definitions and confirm exactly one `export default`
+Now that the engine lives in real modules under `src/` (see "Current state" above), there's a
+real automated suite instead of the fully-manual process this section used to describe:
 
-This should become real `npm test` + a bundler build step. The manual version worked but is
-slow and easy to skip under time pressure — don't skip it, it's caught multiple real bugs
-(the roster-rating drift, a 10x unit conversion bug in home field advantage, a tenure-tracking
-bug in coach firing).
+- **`npm test`** — runs `test/*.test.js` on Node's built-in test runner (no extra dependency).
+  Currently: `data-integrity.test.js` (league data shape, no duplicate rostered players, schedule
+  generator sanity) and `multi-year-parity.test.js` (see below). Both run in well under a second.
+- **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
+  real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
+  coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
+  rerunnable version of the "run 16 simulated years, inspect by hand" pass this file used to
+  reference informally — use it whenever you touch progression, coaching, or the roster-pull
+  weight, per the Parity design note above.
+- **`test/multi-year-parity.test.js`** — the automated form of the same 16-year run, asserting
+  the Commissioner's stated design goal directly: dynasties possible but not guaranteed, solid
+  league-wide parity. Checks roster/rating integrity, rating-spread bounds, league-mean drift
+  (catches the roster-pull absolute-vs-relative bug class specifically), plausible coach firing
+  rate, meaningful top-5/bottom-5 turnover, no team winning every year or >60% of titles, and at
+  least one repeat champion across the run. There's no seeded PRNG in this codebase, so its
+  bounds are deliberately padded versus the exact numbers below to keep the false-failure rate
+  low — a single failure is worth a re-run before treating it as a regression; a consistent
+  failure is real.
+- **`npm run build`** (Vite) is now the real build-validity check — no more manual
+  `esbuild --jsx=automatic` step, and no risk of duplicate top-level definitions across files
+  now that each subsystem is its own module (a build failure or duplicate-export error surfaces
+  immediately instead of needing a manual grep).
+
+Validated 16-year benchmark from the module split (see git history for the full run): rating SD
+5.4-8.9 (close to the earlier hand-tuned 6.9-10.0 pass), ~5.5% coach firing rate per
+team-season, 24/32 teams touched a top-5 finish, 22/32 touched a bottom-5, 11 distinct
+Commissioners Cup champions across 16 years with the top team winning 3 — dynasties possible,
+nowhere close to guaranteed. Re-run `npm run simulate:years 16` and eyeball it against these
+numbers if you touch progression, coaching, or the roster-pull weight.
+
+This workflow has already caught real bugs, both before and after the module split: the
+roster-rating drift, a 10x unit conversion bug in home field advantage, a tenure-tracking bug in
+coach firing, and — caught immediately by the new multi-year harness the first time it ran —
+two missing-import bugs from the module split itself (the offseason Trades step and every Press
+Box prompt were silently broken until the harness actually exercised them). Don't skip it.
 
 ## What has to change for local/non-Claude.ai execution
 
