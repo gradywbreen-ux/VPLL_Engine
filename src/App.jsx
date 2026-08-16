@@ -25,6 +25,7 @@ import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInRev
 import { fetchArticle } from "./pressbox/api.js";
 import { STYLES } from "./styles/styles.js";
 import { storage } from "./storage.js";
+import leagueIconUrl from "./assets/logo/vpll-league-icon.png";
 
 import { RatingBar } from "./components/RatingBar.jsx";
 import { TeamCard } from "./components/TeamCard.jsx";
@@ -843,7 +844,10 @@ export default function VPLLSimulator() {
         <header className="vpll-masthead">
           <div className="vpll-eyebrow">Vermont Professional Lacrosse League</div>
           <div className="vpll-title-row">
-            <h1 className="vpll-title">VPLL <span className="accent">Simulation Engine</span></h1>
+            <div className="vpll-title-lockup">
+              <img src={leagueIconUrl} alt="VPLL" className="vpll-league-icon" />
+              <h1 className="vpll-title">VPLL <span className="accent">Simulation Engine</span></h1>
+            </div>
             <span className="vpll-scoreboard-tag">
               YEAR {yearNumber} · {bothTrophiesDecided ? "OFFSEASON" : seasons.culkin ? "CULKIN SEASON" : corkumChampion ? "OFFSEASON WINDOW" : "CORKUM SEASON"}
             </span>

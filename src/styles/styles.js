@@ -47,6 +47,8 @@ export const STYLES = `
   color: var(--ink-soft); margin-bottom: 4px;
 }
 .vpll-title-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.vpll-title-lockup { display: flex; align-items: center; gap: 12px; }
+.vpll-league-icon { height: clamp(28px, 5vw, 44px); width: auto; flex-shrink: 0; }
 .vpll-title {
   font-family: 'Zilla Slab', Georgia, serif; font-weight: 700;
   font-size: clamp(28px, 5vw, 44px); letter-spacing: -0.01em; margin: 0; color: var(--ink);
