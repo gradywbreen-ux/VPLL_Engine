@@ -21,21 +21,38 @@ simulator itself. Treat them as historical/reference, not live data.
 
 ## Current state
 
-Everything currently lives in **one file**: `src/VPLL_Simulator.jsx` (~220KB). This was built
-incrementally across many sessions inside a Claude.ai artifact, which only supports single-file
-React components — that constraint is why it's one file, not a design choice. **Splitting this
-into a real modular project is an expected and welcome first task**, not something to avoid.
+The engine is a real Vite + React project under `src/`, `scripts/`, and `test/` — no longer the
+single ~220KB `src/VPLL_Simulator.jsx` file it started as. That file was built incrementally
+across many sessions inside a Claude.ai artifact, which only supports single-file React
+components — that constraint is why it started as one file, not a design choice. It's been fully
+decomposed (see git history for the split) and removed; every function/const body was moved
+verbatim into its new module, not rewritten, so the module boundaries below don't imply any
+behavior changed along the way.
 
-Rough shape of what's in that file, top to bottom:
-1. Embedded league data (`RAW_DATA` — 32 teams, ~800-900 players, 96 coaches, name pools)
-2. Simulation engine (scoring formula, indoor/outdoor balance, OT, 2-point cycle, injuries)
-3. Schedule generator (256-game season, division/region/conference pairing logic)
-4. Playoff bracket engine (wild card → regional semis → regional final → conf final → trophy)
-5. Standings + Commissioners Cup calculation
-6. Offseason systems: draft (need-aware), coaching carousel, retirement, free agency
-   (motivation-driven), trades (autonomous + manual override), team rating progression
-7. Press Box: Claude API-powered game recaps / Hot Stove / Week in Review articles
-8. React UI (tabs: Exhibition, Season, Playoffs, Standings, Offseason, Press Box)
+Current module layout:
+- `src/data/` — `rawData.js` (embedded `RAW_DATA`: 32 teams, 800 players, 96 coaches, name pools,
+  plus `PRISTINE_YEAR1`), `migrations.js` (one-time LSM position migration), `reset.js`
+  (`resetLeagueDataToYear1()`, the single source of truth the app and the test harness both use)
+- `src/engine/` — one module per subsystem: `mathHelpers`, `contracts` (salary cap), `ratings`
+  (roster→rating feedback loop), `simulation` (scoring formula, indoor/outdoor balance, OT,
+  2-point cycle, injuries), `boxScore` (goal attribution), `schedule` (256-game generator),
+  `trades` (autonomous + manual override), `standings`, `playoffs` (wild card → regional semis →
+  regional final → conf final → trophy), `progression` (zero-sum tag progression), `draft`
+  (need-aware), `coaching` (carousel), `retirement`
+- `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
+  `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
+  has to change" below, unresolved)
+- `src/components/` — `RatingBar`, `TeamCard`, `BoxScore`, `PlayoffRound`, `StandingsTable`,
+  `Article`, `CombinedCupTable`
+- `src/styles/styles.js` — the CSS-in-JS design system
+- `src/storage.js` — localStorage-backed replacement for `window.storage`, same key names
+- `src/App.jsx` — the main component (tabs: Exhibition, Season, Playoffs, Standings, Offseason,
+  Press Box), wired to all of the above
+- `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
+  simulation harness and CLI report (see "Testing workflow" below)
+- `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`
+
+`npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
 ## Critical architectural gotcha — read before touching data mutation code
 
