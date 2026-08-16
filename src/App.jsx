@@ -33,6 +33,7 @@ import { PlayoffRound } from "./components/PlayoffRound.jsx";
 import { StandingsTable } from "./components/StandingsTable.jsx";
 import { Article } from "./components/Article.jsx";
 import { CombinedCupTable } from "./components/CombinedCupTable.jsx";
+import { TeamLogo } from "./components/TeamLogo.jsx";
 
 export default function VPLLSimulator() {
   const [activeTab, setActiveTab] = useState("exhibition");
@@ -912,7 +913,7 @@ export default function VPLLSimulator() {
                 <div className="vpll-history-list">
                   {gameHistory.slice(0, 8).map((h, i) => (
                     <div key={i} className="vpll-history-item">
-                      <span>{h.homeTeam} vs {h.awayTeam} {h.isIndoor ? "(Indoor)" : "(Outdoor)"}</span>
+                      <span className="vpll-team-name-row"><TeamLogo teamName={h.homeTeam} size={18} /> {h.homeTeam} vs <TeamLogo teamName={h.awayTeam} size={18} /> {h.awayTeam} {h.isIndoor ? "(Indoor)" : "(Outdoor)"}</span>
                       <span className="vpll-history-score">{h.homeScore} – {h.awayScore}{h.ot ? " OT" : ""}</span>
                     </div>
                   ))}
@@ -988,7 +989,7 @@ export default function VPLLSimulator() {
                               style={res ? { cursor: "pointer" } : {}}
                               title={res ? "Click for box score" : ""}
                             >
-                              <span className="matchup">{g.home} vs {g.away}</span>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={g.home} size={18} /> {g.home} vs <TeamLogo teamName={g.away} size={18} /> {g.away}</span>
                               <span className="played">{res ? `${res.homeScore}–${res.awayScore}${res.ot ? " OT" : ""} ${isExpanded ? "▾" : "▸"}` : "—"}</span>
                             </div>
                             {isExpanded && res && res.homeGoals && (
@@ -1034,6 +1035,7 @@ export default function VPLLSimulator() {
                 {seasons[activeSeasonType].playoffs.champion && (
                   <div className="vpll-champion-banner">
                     <span className="vpll-champion-label">{TROPHY_LABEL[activeSeasonType]} Champion</span>
+                    <TeamLogo teamName={seasons[activeSeasonType].playoffs.champion} size={48} />
                     <span className="vpll-champion-name">{seasons[activeSeasonType].playoffs.champion}</span>
                   </div>
                 )}
@@ -1053,12 +1055,12 @@ export default function VPLLSimulator() {
                   <div className="vpll-week-block">
                     <div className="vpll-week-label">{TROPHY_LABEL[activeSeasonType]} Final (Best of 3)</div>
                     <div className="vpll-game-row" style={{ marginBottom: 8 }}>
-                      <span className="matchup">{seasons[activeSeasonType].playoffs.trophyFinal.teamA} vs {seasons[activeSeasonType].playoffs.trophyFinal.teamB}</span>
+                      <span className="matchup vpll-team-name-row"><TeamLogo teamName={seasons[activeSeasonType].playoffs.trophyFinal.teamA} size={18} /> {seasons[activeSeasonType].playoffs.trophyFinal.teamA} vs <TeamLogo teamName={seasons[activeSeasonType].playoffs.trophyFinal.teamB} size={18} /> {seasons[activeSeasonType].playoffs.trophyFinal.teamB}</span>
                       <span className="played">{seasons[activeSeasonType].playoffs.trophyFinal.winsA}–{seasons[activeSeasonType].playoffs.trophyFinal.winsB}</span>
                     </div>
                     {seasons[activeSeasonType].playoffs.trophyFinal.games.map((g, i) => (
                       <div className="vpll-game-row" key={i}>
-                        <span className="matchup">Game {i + 1}: {g.home} vs {g.away}</span>
+                        <span className="matchup vpll-team-name-row">Game {i + 1}: <TeamLogo teamName={g.home} size={18} /> {g.home} vs <TeamLogo teamName={g.away} size={18} /> {g.away}</span>
                         <span className="played">{g.homeScore}–{g.awayScore}{g.ot ? " OT" : ""}</span>
                       </div>
                     ))}
@@ -1112,7 +1114,7 @@ export default function VPLLSimulator() {
                             const pct = (row.payroll / SALARY_CAP) * 100;
                             return (
                               <tr key={row.t}>
-                                <td>{row.t}</td>
+                                <td><div className="vpll-team-name-row"><TeamLogo teamName={row.t} size={20} />{row.t}</div></td>
                                 <td className="num">{row.roster}</td>
                                 <td className="num">{formatMoney(row.payroll)}</td>
                                 <td className="num">{pct.toFixed(1)}%</td>
@@ -1174,8 +1176,8 @@ export default function VPLLSimulator() {
               <>
                 <div className="vpll-champion-banner" style={{ marginBottom: 18 }}>
                   <span className="vpll-champion-label">Year {yearNumber} Complete</span>
-                  <span className="vpll-champion-name" style={{ fontSize: 20 }}>
-                    Corkum: {seasons.corkum.playoffs.champion} · Culkin: {seasons.culkin.playoffs.champion}
+                  <span className="vpll-champion-name vpll-team-name-row" style={{ fontSize: 20, justifyContent: "center" }}>
+                    Corkum: <TeamLogo teamName={seasons.corkum.playoffs.champion} size={24} /> {seasons.corkum.playoffs.champion} · Culkin: <TeamLogo teamName={seasons.culkin.playoffs.champion} size={24} /> {seasons.culkin.playoffs.champion}
                   </span>
                 </div>
 
@@ -1196,7 +1198,7 @@ export default function VPLLSimulator() {
                           <div className="vpll-progress-label" style={{ marginBottom: 4 }}>Round {round}</div>
                           {offseason.draft.results.filter((p) => p.round === round).slice(0, round === 1 ? 32 : 8).map((p) => (
                             <div className="vpll-game-row" key={p.overallPick}>
-                              <span className="matchup">Pick {p.overallPick} ({p.team}): {p.prospect.name}, {POS_NAME[p.prospect.pos]}, Age {p.prospect.age}</span>
+                              <span className="matchup vpll-team-name-row">Pick {p.overallPick} (<TeamLogo teamName={p.team} size={16} /> {p.team}): {p.prospect.name}, {POS_NAME[p.prospect.pos]}, Age {p.prospect.age}</span>
                               <span className="played">OVR {p.prospect.overall} · Ceil {p.prospect.ceiling}</span>
                             </div>
                           ))}
@@ -1219,7 +1221,7 @@ export default function VPLLSimulator() {
                       <div className="vpll-info-banner">{offseason.coaching.fired.length} of 32 Head Coach/GM seats turned over this offseason.</div>
                       {offseason.coaching.fired.map((f, i) => (
                         <div className="vpll-game-row" key={i}>
-                          <span className="matchup">{f.team}: {f.oldCoach} ({f.oldArch}) fired</span>
+                          <span className="matchup vpll-team-name-row"><TeamLogo teamName={f.team} size={18} /> {f.team}: {f.oldCoach} ({f.oldArch}) fired</span>
                           <span className="played">→ {offseason.coaching.hired[i]?.newCoach} ({offseason.coaching.hired[i]?.newArch})</span>
                         </div>
                       ))}
@@ -1240,7 +1242,7 @@ export default function VPLLSimulator() {
                       <div className="vpll-info-banner">{offseason.retirement.retirees.length} players announced their retirement league-wide.</div>
                       {offseason.retirement.retirees.map((r, i) => (
                         <div className="vpll-game-row" key={i}>
-                          <span className="matchup">{r.name} ({POS_NAME[r.pos]}, {r.team})</span>
+                          <span className="matchup vpll-team-name-row"><TeamLogo teamName={r.team} size={18} /> {r.name} ({POS_NAME[r.pos]}, {r.team})</span>
                           <span className="played">Age {r.age}</span>
                         </div>
                       ))}
@@ -1266,7 +1268,7 @@ export default function VPLLSimulator() {
                           <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Signings</div>
                           {offseason.freeAgency.signed.map((s, i) => (
                             <div className="vpll-game-row" key={i}>
-                              <span className="matchup">{s.name} (OVR {s.ovr}, {s.motivation}): {s.from} → {s.team}</span>
+                              <span className="matchup vpll-team-name-row">{s.name} (OVR {s.ovr}, {s.motivation}): {s.from} → <TeamLogo teamName={s.team} size={18} /> {s.team}</span>
                               <span className="played">{formatMoney(s.aav)}/yr</span>
                             </div>
                           ))}
@@ -1291,7 +1293,7 @@ export default function VPLLSimulator() {
                       </div>
                       {offseason.trades.trades.map((t, i) => (
                         <div className="vpll-game-row" key={i}>
-                          <span className="matchup">{t.teamA}: {t.playerA} ↔ {t.teamB}: {t.playerB}</span>
+                          <span className="matchup vpll-team-name-row"><TeamLogo teamName={t.teamA} size={18} /> {t.teamA}: {t.playerA} ↔ <TeamLogo teamName={t.teamB} size={18} /> {t.teamB}: {t.playerB}</span>
                           <span className="played" style={{ fontSize: 11, maxWidth: 220, textAlign: "right" }}>{t.reason}</span>
                         </div>
                       ))}
@@ -1305,6 +1307,7 @@ export default function VPLLSimulator() {
                   <div className="vpll-week-label">Commissioner's Trade Override</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
                     <div>
+                      <div className="vpll-team-name-row" style={{ marginBottom: 6 }}><TeamLogo teamName={manualTeamA} size={24} /></div>
                       <select className="vpll-select" value={manualTeamA} onChange={(e) => { setManualTeamA(e.target.value); setManualPlayerA(""); }}>
                         {TEAM_NAMES.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
@@ -1314,6 +1317,7 @@ export default function VPLLSimulator() {
                       </select>
                     </div>
                     <div>
+                      <div className="vpll-team-name-row" style={{ marginBottom: 6 }}><TeamLogo teamName={manualTeamB} size={24} /></div>
                       <select className="vpll-select" value={manualTeamB} onChange={(e) => { setManualTeamB(e.target.value); setManualPlayerB(""); }}>
                         {TEAM_NAMES.filter((t) => t !== manualTeamA).map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
@@ -1344,7 +1348,7 @@ export default function VPLLSimulator() {
                       </div>
                       {offseason.progression.results.sort((a, b) => b.delta - a.delta).map((r, i) => (
                         <div className="vpll-game-row" key={i}>
-                          <span className="matchup">{r.team}{r.tagChanged ? ` — ${r.oldTag} → ${r.newTag}` : ""}</span>
+                          <span className="matchup vpll-team-name-row"><TeamLogo teamName={r.team} size={18} /> {r.team}{r.tagChanged ? ` — ${r.oldTag} → ${r.newTag}` : ""}</span>
                           <span className="played">{r.oldScore} → {r.newScore} ({r.delta > 0 ? "+" : ""}{r.delta})</span>
                         </div>
                       ))}
@@ -1353,7 +1357,7 @@ export default function VPLLSimulator() {
                           <div className="vpll-progress-label" style={{ margin: "12px 0 4px" }}>Player Development</div>
                           {offseason.progression.developments.slice(0, 15).map((d, i) => (
                             <div className="vpll-game-row" key={i}>
-                              <span className="matchup">{d.name} ({d.team})</span>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={d.team} size={18} /> {d.name} ({d.team})</span>
                               <span className="played">{d.from} → {d.to} {d.hit ? "📈" : "📉"}</span>
                             </div>
                           ))}
@@ -1377,8 +1381,8 @@ export default function VPLLSimulator() {
                 <div className="vpll-section-label">League History</div>
                 {yearHistory.slice().reverse().map((h, i) => (
                   <div className="vpll-history-item" key={i} style={{ marginBottom: 6 }}>
-                    <span>Year {h.year}: Corkum — {h.corkumChampion} · Culkin — {h.culkinChampion}</span>
-                    <span className="vpll-history-score">Cup: {h.cupChampion}</span>
+                    <span className="vpll-team-name-row">Year {h.year}: Corkum — <TeamLogo teamName={h.corkumChampion} size={18} /> {h.corkumChampion} · Culkin — <TeamLogo teamName={h.culkinChampion} size={18} /> {h.culkinChampion}</span>
+                    <span className="vpll-history-score vpll-team-name-row">Cup: <TeamLogo teamName={h.cupChampion} size={18} /> {h.cupChampion}</span>
                   </div>
                 ))}
               </div>

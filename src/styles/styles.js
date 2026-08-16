@@ -87,6 +87,9 @@ export const STYLES = `
 .vpll-team-card.home { border-left: 4px solid var(--forest); }
 .vpll-team-card.away { border-left: 4px solid var(--lake); }
 
+.vpll-team-logo { filter: drop-shadow(0 1px 2px rgba(22,36,28,0.25)); }
+.vpll-team-name-row { display: flex; align-items: center; gap: 8px; }
+
 .vpll-role-tag {
   font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--ink-soft);

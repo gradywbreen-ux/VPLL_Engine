@@ -1,3 +1,5 @@
+import { TeamLogo } from "./TeamLogo.jsx";
+
 export function BoxScore({ result }) {
   if (!result) return null;
   const { homeTeam, awayTeam, homeScore, awayScore, ot, homeGoals, awayGoals, homeInjury, awayInjury, homeFatigued, awayFatigued } = result;
@@ -6,6 +8,7 @@ export function BoxScore({ result }) {
     <div className="vpll-boxscore vpll-score-reveal">
       <div className="vpll-boxscore-header">
         <div className="vpll-bs-team">
+          <TeamLogo teamName={homeTeam} size={36} />
           <span className="vpll-bs-team-name">{homeTeam}</span>
           <span className={`vpll-bs-score ${homeWon ? "winner" : ""}`}>{homeScore}</span>
         </div>
@@ -14,6 +17,7 @@ export function BoxScore({ result }) {
           {ot && <span className="vpll-bs-ot-badge">OT{ot.periods > 1 ? ` (${ot.periods})` : ""}</span>}
         </div>
         <div className="vpll-bs-team">
+          <TeamLogo teamName={awayTeam} size={36} />
           <span className="vpll-bs-team-name">{awayTeam}</span>
           <span className={`vpll-bs-score ${!homeWon ? "winner" : ""}`}>{awayScore}</span>
         </div>
@@ -21,7 +25,7 @@ export function BoxScore({ result }) {
       <div className="vpll-bs-body">
         <div className="vpll-scoring-summary">
           <div>
-            <div className="vpll-section-label">{homeTeam} Scoring</div>
+            <div className="vpll-section-label vpll-team-name-row"><TeamLogo teamName={homeTeam} size={18} />{homeTeam} Scoring</div>
             <ul className="vpll-goal-list">
               {homeGoals.map((g, i) => (
                 <li key={i} className="vpll-goal-item">
@@ -32,7 +36,7 @@ export function BoxScore({ result }) {
             </ul>
           </div>
           <div>
-            <div className="vpll-section-label">{awayTeam} Scoring</div>
+            <div className="vpll-section-label vpll-team-name-row"><TeamLogo teamName={awayTeam} size={18} />{awayTeam} Scoring</div>
             <ul className="vpll-goal-list">
               {awayGoals.map((g, i) => (
                 <li key={i} className="vpll-goal-item">

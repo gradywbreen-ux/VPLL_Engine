@@ -1,4 +1,5 @@
 import { BoxScore } from "./BoxScore.jsx";
+import { TeamLogo } from "./TeamLogo.jsx";
 
 export function PlayoffRound({ title, games, roundKey, seasonType, expandedGameKey, onGameClick, boxScoreFor }) {
   if (!games || !games.length) return null;
@@ -16,8 +17,8 @@ export function PlayoffRound({ title, games, roundKey, seasonType, expandedGameK
               style={g.result ? { cursor: "pointer" } : {}}
               title={g.result ? "Click for box score" : ""}
             >
-              <span className="matchup">
-                {g.home} vs {g.away}
+              <span className="matchup vpll-team-name-row">
+                <TeamLogo teamName={g.home} size={18} /> {g.home} vs <TeamLogo teamName={g.away} size={18} /> {g.away}
                 {g.region && <span style={{ opacity: 0.55 }}> · {g.region.split("|")[1]}</span>}
                 {g.conference && <span style={{ opacity: 0.55 }}> · {g.conference === "Lake" ? "Lakeshore" : "Mountainside"}</span>}
               </span>

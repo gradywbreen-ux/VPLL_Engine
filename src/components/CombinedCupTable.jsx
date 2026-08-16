@@ -1,3 +1,5 @@
+import { TeamLogo } from "./TeamLogo.jsx";
+
 export function CombinedCupTable({ table, teamList }) {
   const rows = teamList
     .map((name) => table[name])
@@ -14,7 +16,7 @@ export function CombinedCupTable({ table, teamList }) {
       <tbody>
         {rows.map((r) => (
           <tr key={r.team}>
-            <td>{r.team}</td>
+            <td><div className="vpll-team-name-row"><TeamLogo teamName={r.team} size={20} />{r.team}</div></td>
             <td className="num">{r.w}</td>
             <td className="num">{r.l}</td>
             <td className="num">{r.corkumTotal}</td>
