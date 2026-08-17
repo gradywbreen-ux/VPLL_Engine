@@ -162,22 +162,30 @@ coach firing, and — caught immediately by the new multi-year harness the first
 two missing-import bugs from the module split itself (the offseason Trades step and every Press
 Box prompt were silently broken until the harness actually exercised them). Don't skip it.
 
-## What has to change for local/non-Claude.ai execution
+## Local/non-Claude.ai execution — both blockers resolved
 
-Two things currently only work inside the Claude.ai artifact sandbox:
+Two things only ever worked inside the Claude.ai artifact sandbox. Both are now handled:
 
-1. **`window.storage`** — artifact-specific persistence API. Swap for `localStorage` (data
-   volume is well within its limits) or `IndexedDB` if it grows. API shapes are close enough
-   that this should be a mechanical replacement, not a redesign. Storage keys currently in use:
+1. **`window.storage`** (artifact-specific persistence API) → `src/storage.js`, a thin
+   `localStorage` wrapper with the same async `get`/`set`/`delete` shape, same key names:
    `vpll-game-history`, `vpll-league-data-state`, `vpll-meta-state`, `vpll-year1-state`,
-   `vpll-pressbox-archive` (plus a legacy `vpll-season-state` migration path that can probably
-   be dropped now).
+   `vpll-pressbox-archive` (plus the legacy `vpll-season-state` migration path, kept for anyone
+   still on an old save).
 
-2. **Press Box's Anthropic API call** (`fetchArticle()`) — currently calls `api.anthropic.com`
-   directly with no key, which only works because the Claude.ai artifact environment proxies
-   and authenticates it transparently. Outside that environment this needs a real API key,
-   which should **not** live in client-side code. Build a minimal local server/proxy that holds
-   the key and forwards the request; point `fetchArticle()` at that instead.
+2. **Press Box's Anthropic API call** — `fetchArticle()` used to call `api.anthropic.com`
+   directly with no key, which only worked because the Claude.ai artifact environment proxied
+   and authenticated it transparently; everywhere else it just failed. Now: `server/index.mjs`
+   is a minimal, dependency-free local proxy (plain `node:http`) that holds the real API key
+   server-side (via a gitignored `.env` — copy `.env.example` to get started) and forwards
+   `{prompt}` to the real Messages API. Vite's dev server proxies `/api/*` to it (see
+   `vite.config.js`), so there's no CORS to configure. Run it with `npm run server` alongside
+   `npm run dev`, or both at once with `npm run dev:all`. Without it running, Press Box fails
+   gracefully into the existing "the presses jammed" error banner — same as any other article
+   generation failure, not a crash.
+
+   Along the way, fixed `model: "claude-sonnet-4-6"` — a stale, invalid model ID that had been
+   sitting in this code since the original artifact export and would have failed every request
+   regardless of the proxy. It's `claude-sonnet-5` now, set server-side.
 
 ## Design system (for reference if rebuilding UI)
 
