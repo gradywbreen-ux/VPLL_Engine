@@ -26,7 +26,7 @@ The VPLL operates two conferences, each divided into two regions, each region co
 
 **South Region:**
 - Metro East Division
-- County Division
+- Valley Division
 
 **MOUNTAINSIDE CONFERENCE**
 
@@ -46,7 +46,7 @@ The VPLL operates two conferences, each divided into two regions, each region co
 
 **Lakeshore — Metro East:** Essex Railroaders, South Burlington Aviators, Williston Lynx, Jericho Stags
 
-**Lakeshore — County:** Fair Haven Tycoons, Charlotte Navigators, Shelburne Reapers, Middlebury RiverWolves
+**Lakeshore — Valley:** Fair Haven Tycoons, Charlotte Navigators, Shelburne Reapers, Middlebury RiverWolves
 
 **Mountainside — Kingdom:** Jay StormKings, Saint Johnsbury Dinos, Enosburg Owls, Newport Spirits
 
@@ -54,7 +54,7 @@ The VPLL operates two conferences, each divided into two regions, each region co
 
 **Mountainside — River:** Ludlow Shepherds, Windsor Independents, Woodstock Boilers, Springfield Hardshells
 
-**Mountainside — Shire:** Hartford Bulls, Brattleboro Pioneers, Manchester Black Bears, Bennington Prowlers
+**Mountainside — Shire:** Hartford Rampage, Brattleboro Pioneers, Manchester Black Bears, Bennington Prowlers
 
 ### 1.3 Seasons & Trophies
 
@@ -980,7 +980,7 @@ Quiet but consistent suburban rivalry. Geographically close, competitively relia
 Division's best vs division's worst. Could develop into a bully/underdog dynamic — if the Stags ever pull an upset it becomes a landmark moment.
 
 **Charlotte Navigators vs Shelburne Reapers**
-The premier County division rivalry. Two of the best teams in Lakeshore South. Most competitive divisional matchup in the conference.
+The premier Valley division rivalry. Two of the best teams in Lakeshore South. Most competitive divisional matchup in the conference.
 
 **Middlebury RiverWolves vs Fair Haven Tycoons**
 Two lower rated teams on opposite ends of the county. Fierce precisely because neither has much else to play for.
@@ -1008,7 +1008,7 @@ Quiet Connecticut River valley rivalry. Two lower rated teams that know each oth
 **Bennington Prowlers vs Brattleboro Pioneers**
 Southern Vermont pride. Shire division rivalry with genuine geographic and cultural roots.
 
-**Manchester Black Bears vs Hartford Bulls**
+**Manchester Black Bears vs Hartford Rampage**
 Physical Shire division rivalry. Geographically close, most hard-nosed matchup in the division.
 
 **Bennington Prowlers vs Manchester Black Bears**
@@ -1074,7 +1074,7 @@ Resort Money: Stowe Smugglers, Jay StormKings
 Lakeshore South Wealth: Charlotte Navigators, Shelburne Reapers
 
 **Tier 2 — Mid Market / Competitive Payroll**
-Rutland Cryptids, Bennington Prowlers, Springfield Hardshells, Windsor Independents, Hartford Bulls, Montpelier Congress, Middlebury RiverWolves, Williston Lynx, Saint Albans Dawnlanders, Manchester Black Bears, Woodstock Boilers, Missisquoi Bay Muskies
+Rutland Cryptids, Bennington Prowlers, Springfield Hardshells, Windsor Independents, Hartford Rampage, Montpelier Congress, Middlebury RiverWolves, Williston Lynx, Saint Albans Dawnlanders, Manchester Black Bears, Woodstock Boilers, Missisquoi Bay Muskies
 
 **Tier 3 — Small Market / Lean Payroll**
 Newport Spirits, Saint Johnsbury Dinos, Barre Carvers, Brattleboro Pioneers, Ludlow Shepherds, Milton Machine, Jericho Stags, Fair Haven Tycoons, Enosburg Owls, Grand Isle Heroes
