@@ -1,12 +1,24 @@
-import { NAME_POOL_FIRST, NAME_POOL_LAST } from "../data/rawData.js";
+import { NAME_POOL_FIRST, NAME_POOL_LAST, TEAMS } from "../data/rawData.js";
 import { rand } from "./mathHelpers.js";
 import { weakestPosition } from "./ratings.js";
 
 /* ---------- Draft ---------- */
 export function buildDraftOrder(combinedStandings) {
   const sorted = [...combinedStandings].sort((a, b) => a.points - b.points); // worst first
-  const lotteryPool = sorted.slice(0, 16);
-  const rest = sorted.slice(16);
+
+  // Master File 9.2/15.7: lottery pool is the bottom 8 teams PER CONFERENCE
+  // (16 total), not the bottom 16 league-wide — keeps the lottery balanced
+  // even in a year one conference is much weaker than the other.
+  const byConference = {};
+  for (const entry of sorted) {
+    const conf = TEAMS[entry.team].conf;
+    (byConference[conf] = byConference[conf] || []).push(entry);
+  }
+  const lotteryPool = Object.values(byConference).flatMap((confSorted) => confSorted.slice(0, 8));
+  lotteryPool.sort((a, b) => a.points - b.points); // restore true combined-standings order across both conferences
+  const lotteryTeamSet = new Set(lotteryPool.map((e) => e.team));
+  const rest = sorted.filter((e) => !lotteryTeamSet.has(e.team));
+
   const pool = [...lotteryPool];
   const picks1to8 = [];
   for (let i = 0; i < 8 && pool.length; i++) {

@@ -81,17 +81,35 @@ export function gameDayTeam(team, tag, isFatigued, teamName) {
 }
 
 export function homeFieldBonus(isIndoor, isHome) {
-  // Indoor Q2/Q4 longer road shifts (Master File 5.5) are folded in here as a whole-game
-  // average — we simulate one aggregate score rather than four quarters, so the stated
-  // per-half bonus (+6 home / -4 away Transition, +5 home Clearing, -15% away Riding)
-  // is approximated at half strength across the full game.
-  if (!isHome) return isIndoor ? { clutch: -3, transition: -2 - 2 } : { clutch: -2, transition: -1 };
-  return isIndoor ? { clutch: 5, transition: 4 + 3 } : { clutch: 3, transition: 2 };
+  // Master File 5.5. Clutch/Consistency/Goalie Passing are flat points on the
+  // same 0-100 scale as the roster-tag OT modifiers (TAG_CLUTCH_OT etc.) —
+  // applyHomeFieldEffects divides by 10 to land on the engine's 1-10 stat
+  // scale. Transition is different: computeTransition() already returns a
+  // 0-100-ish value, so its bonus is added straight to that computed number
+  // inside simulateTeamScore rather than to a raw stat field.
+  //
+  // Indoor Q2/Q4 longer road shifts (+6 home / -4 away Transition, +5 home
+  // Clearing, -15% away Riding) are folded into Transition here as a
+  // whole-game average, at half strength — we simulate one aggregate score
+  // rather than four quarters. The Clearing/Riding half of that same
+  // addendum is applied separately in applyHomeFieldEffects.
+  if (!isHome) {
+    return isIndoor
+      ? { clutch: -3, consistency: -3, transition: -2 + -4 * 0.5, goaliePassing: 0 }
+      : { clutch: -2, consistency: -2, transition: -1, goaliePassing: 0 };
+  }
+  return isIndoor
+    ? { clutch: 5, consistency: 5, transition: 4 + 6 * 0.5, goaliePassing: 3 }
+    : { clutch: 3, consistency: 3, transition: 2, goaliePassing: 2 };
 }
 
-export function applyIndoorQ2Q4Effect(team, isHome, isIndoor) {
-  if (!isIndoor) return team;
+export function applyHomeFieldEffects(team, isHome, isIndoor) {
+  const bonus = homeFieldBonus(isIndoor, isHome);
   const adjusted = { ...team };
+  adjusted.clutch = clamp(adjusted.clutch + bonus.clutch / 10, 1, 10);
+  adjusted.tcon = clamp(adjusted.tcon + bonus.consistency / 10, 1, 10);
+  adjusted.glcPas = clamp(adjusted.glcPas + bonus.goaliePassing / 10, 1, 10);
+  if (!isIndoor) return adjusted;
   if (isHome) {
     adjusted.clearing = clamp(adjusted.clearing + 0.25, 1, 10); // +2.5/100 avg (half of +5) home Clearing boost
   } else {
@@ -149,7 +167,9 @@ export function simulate2PointCycle(offTeam, defTeam) {
   const converted = Math.random() * 100 < conversionScore;
   if (converted) return { attempted: true, converted: true };
 
-  const transitionChance = ((defTeam.tcon * 10) + (defTeam.riding * 10)) / 200;
+  // Master File 5.3: missed attempt -> opponent capitalizes based on their
+  // Transition rating and Riding, not Consistency.
+  const transitionChance = (computeTransition(defTeam) + (defTeam.riding * 10)) / 200;
   const capitalized = Math.random() < transitionChance;
   return { attempted: true, converted: false, capitalized };
 }
@@ -200,8 +220,8 @@ export function simulateGame(homeTeamName, awayTeamName, isIndoor, homeFatigued 
   const homeBalanced = applyBalance(homeRaw, isIndoor);
   const awayBalanced = applyBalance(awayRaw, isIndoor);
 
-  const home = applyIndoorQ2Q4Effect(gameDayTeam(homeBalanced, homeRaw.tag, homeFatigued, homeTeamName), true, isIndoor);
-  const away = applyIndoorQ2Q4Effect(gameDayTeam(awayBalanced, awayRaw.tag, awayFatigued, awayTeamName), false, isIndoor);
+  const home = applyHomeFieldEffects(gameDayTeam(homeBalanced, homeRaw.tag, homeFatigued, homeTeamName), true, isIndoor);
+  const away = applyHomeFieldEffects(gameDayTeam(awayBalanced, awayRaw.tag, awayFatigued, awayTeamName), false, isIndoor);
 
   const homeResult = simulateTeamScore(home, away, true, isIndoor);
   const awayResult = simulateTeamScore(away, home, false, isIndoor);
