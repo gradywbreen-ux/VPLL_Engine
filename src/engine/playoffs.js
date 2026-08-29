@@ -1,6 +1,7 @@
 import { TEAMS, TEAM_NAMES } from "../data/rawData.js";
 import { BY_REGION } from "./schedule.js";
 import { simulateGame } from "./simulation.js";
+import { clamp } from "./mathHelpers.js";
 
 /* ============================================================
    PLAYOFFS (Master File Section 2)
@@ -64,7 +65,11 @@ export function initPlayoffs(table) {
 
 export function playGame(home, away) {
   const raw = simulateGame(home, away, false); // playoffs stay in the season's format (outdoor Corkum for now)
-  return { home, away, homeScore: raw.homeScore, awayScore: raw.awayScore, ot: !!raw.ot,
+  // ot is null or { winner: "home"|"away", periods } — kept intact (not
+  // coerced to a boolean) so simulateTrophyFinalSeries can read periods for
+  // the Double OT+ momentum-carry check (Master File 2.5). Every existing
+  // reader only ever truthy-checks .ot, so this is backward compatible.
+  return { home, away, homeScore: raw.homeScore, awayScore: raw.awayScore, ot: raw.ot,
     winner: raw.homeScore > raw.awayScore ? home : away };
 }
 
@@ -136,17 +141,58 @@ export function simulateConferenceFinalRound(playoffs, table) {
   playoffs.trophyFinal = { teamA: higherSeed, teamB: otherTeam, games: [], winner: null, winsA: 0, winsB: 0 };
 }
 
+// Master File 2.5: an OT win in the Trophy Final can carry a Clutch bump
+// into the next game of the series. Base carry chance is 60%; a winning
+// team with one of these tags uses its own rate instead of the base.
+// Double OT+ (2+ periods) independently pushes the chance up to at least
+// 75% — the Master File doesn't specify how a tag rate and Double OT+
+// combine when both apply, so this takes whichever is higher rather than
+// stacking them.
+const OT_MOMENTUM_CARRY_CHANCE = {
+  "Veteran-led": 0.80,
+  "Rebuilding / Unknown": 0.50,
+  "Young & Inexperienced": 0.45,
+};
+const OT_MOMENTUM_CARRY_BASE = 0.60;
+const OT_MOMENTUM_CARRY_DOUBLE_OT = 0.75;
+const OT_MOMENTUM_CARRY_MAGNITUDE = 5; // +5/-5 Clutch, same flat 0-100 scale as TAG_CLUTCH_OT etc.
+
 export function simulateTrophyFinalSeries(playoffs) {
   const tf = playoffs.trophyFinal;
   const hostOrder = [tf.teamA, tf.teamB, tf.teamA]; // games 1 & 3 hosted by teamA (higher seed)
   let gameNum = 0;
+  let momentum = null; // { winner, loser } carried in from the previous game's OT, applied to this game only
   while (tf.winsA < 2 && tf.winsB < 2 && gameNum < 3) {
     const home = hostOrder[gameNum];
     const away = home === tf.teamA ? tf.teamB : tf.teamA;
+
+    let restore = null;
+    if (momentum) {
+      restore = { [momentum.winner]: TEAMS[momentum.winner].clutch, [momentum.loser]: TEAMS[momentum.loser].clutch };
+      TEAMS[momentum.winner].clutch = clamp(TEAMS[momentum.winner].clutch + OT_MOMENTUM_CARRY_MAGNITUDE / 10, 1, 10);
+      TEAMS[momentum.loser].clutch = clamp(TEAMS[momentum.loser].clutch - OT_MOMENTUM_CARRY_MAGNITUDE / 10, 1, 10);
+    }
+
     const r = playGame(home, away);
+
+    if (restore) {
+      TEAMS[momentum.winner].clutch = restore[momentum.winner];
+      TEAMS[momentum.loser].clutch = restore[momentum.loser];
+    }
+
     tf.games.push(r);
     addCC(playoffs, r.winner, 2);
     if (r.winner === tf.teamA) tf.winsA++; else tf.winsB++;
+
+    momentum = null;
+    if (r.ot) {
+      const otWinner = r.winner;
+      const otLoser = otWinner === home ? away : home;
+      let carryChance = OT_MOMENTUM_CARRY_CHANCE[TEAMS[otWinner].tag] ?? OT_MOMENTUM_CARRY_BASE;
+      if (r.ot.periods >= 2) carryChance = Math.max(carryChance, OT_MOMENTUM_CARRY_DOUBLE_OT);
+      if (Math.random() < carryChance) momentum = { winner: otWinner, loser: otLoser };
+    }
+
     gameNum++;
   }
   tf.winner = tf.winsA === 2 ? tf.teamA : tf.teamB;
