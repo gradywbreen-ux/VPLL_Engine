@@ -243,7 +243,7 @@ export default function VPLLSimulator() {
     if (round === "wildcard") simulateWildcardRound(playoffs);
     else if (round === "regionalSemis") simulateRegionalSemisRound(playoffs, table);
     else if (round === "regionalFinal") simulateRegionalFinalRound(playoffs, table);
-    else if (round === "conferenceFinal") simulateConferenceFinalRound(playoffs, table);
+    else if (round === "conferenceFinal") simulateConferenceFinalRound(playoffs, table, seasonType === "culkin");
     else if (round === "trophyFinal") simulateTrophyFinalSeries(playoffs);
     const newSeasonObj = { ...season, playoffs };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
@@ -1055,6 +1055,21 @@ export default function VPLLSimulator() {
                 <PlayoffRound title="Regional Semifinals" games={seasons[activeSeasonType].playoffs.regionalSemis} roundKey="regionalSemis" seasonType={activeSeasonType} expandedGameKey={expandedGameKey} onGameClick={togglePlayoffBoxScore} boxScoreFor={playoffBoxScoreResultFor} />
                 <PlayoffRound title="Regional Finals" games={seasons[activeSeasonType].playoffs.regionalFinal} roundKey="regionalFinal" seasonType={activeSeasonType} expandedGameKey={expandedGameKey} onGameClick={togglePlayoffBoxScore} boxScoreFor={playoffBoxScoreResultFor} />
                 <PlayoffRound title="Conference Finals" games={seasons[activeSeasonType].playoffs.conferenceFinal} roundKey="conferenceFinal" seasonType={activeSeasonType} expandedGameKey={expandedGameKey} onGameClick={togglePlayoffBoxScore} boxScoreFor={playoffBoxScoreResultFor} />
+                {seasons[activeSeasonType].playoffs.allStarGame && (
+                  <div className="vpll-week-block">
+                    <div className="vpll-week-label">{SEASON_LABEL[activeSeasonType]} All-Star Game</div>
+                    <div className="vpll-game-row">
+                      <span className="matchup">Lakeshore All-Stars vs Mountainside All-Stars</span>
+                      <span className="played">
+                        {seasons[activeSeasonType].playoffs.allStarGame.lakeScore}–{seasons[activeSeasonType].playoffs.allStarGame.mounScore}
+                        {seasons[activeSeasonType].playoffs.allStarGame.ot ? " OT" : ""}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11.5, fontFamily: "JetBrains Mono, monospace", color: "var(--ink-soft)", padding: "6px 12px" }}>
+                      {seasons[activeSeasonType].playoffs.allStarGame.winner === "Lake" ? "Lakeshore" : "Mountainside"} wins — earns Trophy Final Games 1 &amp; 3 home field.
+                    </div>
+                  </div>
+                )}
                 {seasons[activeSeasonType].playoffs.trophyFinal && (
                   <div className="vpll-week-block">
                     <div className="vpll-week-label">{TROPHY_LABEL[activeSeasonType]} Final (Best of 3)</div>

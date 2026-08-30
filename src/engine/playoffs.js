@@ -2,6 +2,7 @@ import { TEAMS, TEAM_NAMES } from "../data/rawData.js";
 import { BY_REGION } from "./schedule.js";
 import { simulateGame } from "./simulation.js";
 import { clamp } from "./mathHelpers.js";
+import { simulateAllStarGame } from "./allStarGame.js";
 
 /* ============================================================
    PLAYOFFS (Master File Section 2)
@@ -128,17 +129,22 @@ export function simulateRegionalFinalRound(playoffs, table) {
   }
 }
 
-export function simulateConferenceFinalRound(playoffs, table) {
+export function simulateConferenceFinalRound(playoffs, table, isIndoor = false) {
   for (const g of playoffs.conferenceFinal) {
     const r = playGame(g.home, g.away);
     g.winner = r.winner; g.result = r;
     addCC(playoffs, r.winner, 2);
   }
   const [a, b] = playoffs.conferenceFinal.map((g) => g.winner);
-  const higherSeed = betterSeed(table, a, b);
-  const otherTeam = higherSeed === a ? b : a;
-  // Games 1 & 3 hosted by the better regular-season record (stand-in for All-Star Game result, not yet simulated)
-  playoffs.trophyFinal = { teamA: higherSeed, teamB: otherTeam, games: [], winner: null, winsA: 0, winsB: 0 };
+
+  // Master File 1.5/2.6: the conference that wins the season's All-Star
+  // Game hosts Games 1 & 3 of the Trophy Final. a and b are guaranteed one
+  // per conference (conference finals produce exactly one finalist each).
+  const allStarGame = simulateAllStarGame(isIndoor);
+  playoffs.allStarGame = allStarGame;
+  const hostTeam = TEAMS[a].conf === allStarGame.winner ? a : b;
+  const otherTeam = hostTeam === a ? b : a;
+  playoffs.trophyFinal = { teamA: hostTeam, teamB: otherTeam, games: [], winner: null, winsA: 0, winsB: 0 };
 }
 
 // Master File 2.5: an OT win in the Trophy Final can carry a Clutch bump

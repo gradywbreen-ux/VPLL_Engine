@@ -49,12 +49,12 @@ function simulateFullSeasonResults(schedule, isIndoor) {
   return results;
 }
 
-function simulateFullPlayoffs(table) {
+function simulateFullPlayoffs(table, isIndoor = false) {
   const playoffs = initPlayoffs(table);
   simulateWildcardRound(playoffs);
   simulateRegionalSemisRound(playoffs, table);
   simulateRegionalFinalRound(playoffs, table);
-  simulateConferenceFinalRound(playoffs, table);
+  simulateConferenceFinalRound(playoffs, table, isIndoor);
   simulateTrophyFinalSeries(playoffs);
   return playoffs;
 }
@@ -264,12 +264,12 @@ export function simulateOneYear() {
   const corkumSchedule = generateFullSchedule();
   const corkumResults = simulateFullSeasonResults(corkumSchedule, false);
   const corkumTable = computeStandings(corkumSchedule, corkumResults);
-  const corkumPlayoffs = simulateFullPlayoffs(corkumTable);
+  const corkumPlayoffs = simulateFullPlayoffs(corkumTable, false);
 
   const culkinSchedule = generateFullSchedule();
   const culkinResults = simulateFullSeasonResults(culkinSchedule, true);
   const culkinTable = computeStandings(culkinSchedule, culkinResults);
-  const culkinPlayoffs = simulateFullPlayoffs(culkinTable);
+  const culkinPlayoffs = simulateFullPlayoffs(culkinTable, true);
 
   const combinedCupStandings = computeCombinedCupStandings(corkumTable, corkumPlayoffs, culkinTable, culkinPlayoffs);
   const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0].team;
