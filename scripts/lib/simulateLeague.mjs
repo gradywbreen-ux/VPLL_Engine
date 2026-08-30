@@ -13,7 +13,7 @@
    the real app does (see CLAUDE.md's "Critical architectural gotcha") —
    callers should resetLeagueDataToYear1() before a run for a clean baseline.
    ============================================================ */
-import { TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES } from "../../src/data/rawData.js";
+import { TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, PLAYER_POOL } from "../../src/data/rawData.js";
 import { resetLeagueDataToYear1 } from "../../src/data/reset.js";
 import { rand } from "../../src/engine/mathHelpers.js";
 import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll } from "../../src/engine/contracts.js";
@@ -30,7 +30,10 @@ import { applyLeagueProgression } from "../../src/engine/progression.js";
 import { buildDraftOrder, generateProspect } from "../../src/engine/draft.js";
 import { evaluateFiring, generateFreshCoach } from "../../src/engine/coaching.js";
 import { evaluateRetirement } from "../../src/engine/retirement.js";
-import { cutRosterToSize, enforceRosterFloor, DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE } from "../../src/engine/roster.js";
+import {
+  cutRosterToSize, enforceRosterFloor, ensureFloorBeforeRemoval, maintainPlayerPool,
+  DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, MAX_POOL_PER_POSITION, POSITION_MINIMUMS,
+} from "../../src/engine/roster.js";
 
 /* ---------- Season + playoffs, one season type, fully to completion ---------- */
 function simulateFullSeasonResults(schedule, isIndoor) {
@@ -151,23 +154,32 @@ function runCoaching(combinedCupStandings, corkumPlayoffs, culkinPlayoffs) {
 }
 
 function runRetirement() {
-  const retirees = [];
+  const usedNames = new Set();
+  for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+  for (const p of PLAYER_POOL) usedNames.add(p[0]);
+
+  const retirees = [], poolSignings = [];
   for (const teamName of TEAM_NAMES) {
     const roster = PLAYERS_RAW[teamName];
     for (let i = roster.length - 1; i >= 0; i--) {
       if (evaluateRetirement(roster[i])) {
         retirees.push({ team: teamName, name: roster[i][0], age: roster[i][3], pos: roster[i][1] });
+        const backfill = ensureFloorBeforeRemoval(teamName, roster[i][1], usedNames);
+        if (backfill) poolSignings.push(backfill);
         roster.splice(i, 1);
       }
     }
   }
-  return { retirees };
+  return { retirees, poolSignings };
 }
 
 function runFreeAgency(combinedCupStandings) {
   const reSigned = [], departed = [], signed = [];
   const openMarket = [];
   const standingsMap = combinedCupStandings;
+  const usedNames = new Set();
+  for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+  for (const p of PLAYER_POOL) usedNames.add(p[0]);
 
   function pickMotivation() {
     const r = Math.random();
@@ -194,6 +206,7 @@ function runFreeAgency(combinedCupStandings) {
     return candidates;
   }
 
+  const poolSignings = [];
   for (const team of TEAM_NAMES) {
     const roster = PLAYERS_RAW[team];
     for (let i = roster.length - 1; i >= 0; i--) {
@@ -205,33 +218,37 @@ function runFreeAgency(combinedCupStandings) {
         assignNewContract(p);
         reSigned.push({ team, name: p[0], ovr: p[4], aav: p[9], motivation });
       } else {
+        const backfill = ensureFloorBeforeRemoval(team, p[1], usedNames);
+        if (backfill) poolSignings.push(backfill);
         roster.splice(i, 1);
         openMarket.push({ fromTeam: team, player: p, motivation });
       }
     }
   }
 
-  openMarket.sort((a, b) => b.player[4] - a.player[4]);
-  for (const entry of openMarket) {
-    const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation).filter((x) => PLAYERS_RAW[x.t].length < 30);
+  // General waiver pass: this year's fresh departures compete for a new home right
+  // alongside every player already sitting in the persistent pool from prior years.
+  const pooledCandidates = PLAYER_POOL.splice(0, PLAYER_POOL.length).map((player) => ({ fromTeam: null, player, motivation: "Pool" }));
+  const candidates = [...openMarket, ...pooledCandidates].sort((a, b) => b.player[4] - a.player[4]);
+  for (const entry of candidates) {
+    const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation).filter((x) => PLAYERS_RAW[x.t].length < DRAFT_ROSTER_CAP);
     if (teamsRanked.length && Math.random() < 0.6) {
       const dest = teamsRanked[0].t;
       assignNewContract(entry.player);
       PLAYERS_RAW[dest].push(entry.player);
-      signed.push({ team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam, aav: entry.player[9], motivation: entry.motivation });
+      signed.push({ team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam || "Player Pool", aav: entry.player[9], motivation: entry.motivation });
     } else {
-      departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
+      if (entry.fromTeam) departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
+      PLAYER_POOL.push(entry.player);
     }
   }
 
-  // Free Agency is the last step that can shrink a roster — enforce the floor here (mirrors
+  // Safety net for anything the per-removal guard above couldn't have anticipated (mirrors
   // App.jsx's runFreeAgencyStep exactly).
-  const usedNames = new Set();
-  for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
   const emergencySigned = [];
   for (const team of TEAM_NAMES) emergencySigned.push(...enforceRosterFloor(team, usedNames));
 
-  return { reSigned, signed, departed, emergencySigned };
+  return { reSigned, signed, departed, emergencySigned, poolSignings };
 }
 
 /* ---------- Stats ---------- */
@@ -257,6 +274,14 @@ function rosterIntegrityViolations() {
   for (const name of TEAM_NAMES) {
     const score = TEAMS[name].score;
     if (!Number.isFinite(score) || score < 1 || score > 99) violations.push(`${name}: invalid team score ${score}`);
+  }
+
+  const poolCap = Object.keys(POSITION_MINIMUMS).length * MAX_POOL_PER_POSITION;
+  if (PLAYER_POOL.length > poolCap) violations.push(`player pool: size ${PLAYER_POOL.length} exceeds cap ${poolCap}`);
+  const poolSeen = new Set();
+  for (const p of PLAYER_POOL) {
+    if (poolSeen.has(p[0])) violations.push(`player pool: duplicate player "${p[0]}"`);
+    poolSeen.add(p[0]);
   }
   return violations;
 }
@@ -293,6 +318,7 @@ export function simulateOneYear() {
   // Training camp cuts (Master File 9.7) — final roster-size pass before the next
   // year's seasons open, mirrors App.jsx's beginYear2.
   for (const team of TEAM_NAMES) cutRosterToSize(team, SEASON_ROSTER_CAP);
+  maintainPlayerPool();
 
   const ratingSD = stddev(TEAM_NAMES.map((n) => TEAMS[n].score));
   const ratingMean = mean(TEAM_NAMES.map((n) => TEAMS[n].score));

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 import {
-  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME,
+  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME, PLAYER_POOL,
 } from "./data/rawData.js";
 import { migrateLSMIfNeeded } from "./data/migrations.js";
 import { resetLeagueDataToYear1 } from "./data/reset.js";
@@ -19,7 +19,10 @@ import {
 } from "./engine/playoffs.js";
 import { applyLeagueProgression } from "./engine/progression.js";
 import { buildDraftOrder, generateProspect } from "./engine/draft.js";
-import { cutRosterToSize, enforceRosterFloor, DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP } from "./engine/roster.js";
+import {
+  cutRosterToSize, enforceRosterFloor, ensureFloorBeforeRemoval, maintainPlayerPool,
+  DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE,
+} from "./engine/roster.js";
 import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
 import { evaluateRetirement } from "./engine/retirement.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
@@ -71,6 +74,7 @@ export default function VPLLSimulator() {
           if (saved.teams) Object.assign(TEAMS, saved.teams);
           if (saved.coaches) Object.assign(COACHES, saved.coaches);
           if (saved.players) Object.assign(PLAYERS_RAW, saved.players);
+          if (saved.playerPool) { PLAYER_POOL.length = 0; PLAYER_POOL.push(...saved.playerPool); }
         }
       } catch (e) { /* no league data mutations yet — using embedded Year 1 defaults */ }
 
@@ -386,7 +390,7 @@ export default function VPLLSimulator() {
 
   async function persistLeagueData() {
     try {
-      await storage.set("vpll-league-data-state", JSON.stringify({ teams: TEAMS, coaches: COACHES, players: PLAYERS_RAW }));
+      await storage.set("vpll-league-data-state", JSON.stringify({ teams: TEAMS, coaches: COACHES, players: PLAYERS_RAW, playerPool: PLAYER_POOL }));
     } catch (e) {}
   }
 
@@ -434,6 +438,9 @@ export default function VPLLSimulator() {
     const reSigned = [], departed = [], signed = [];
     const openMarket = [];
     const standingsMap = combinedCupStandings;
+    const usedNames = new Set();
+    for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+    for (const p of PLAYER_POOL) usedNames.add(p[0]);
 
     function pickMotivation() {
       const r = Math.random();
@@ -460,6 +467,7 @@ export default function VPLLSimulator() {
       return candidates;
     }
 
+    const poolSignings = [];
     for (const team of TEAM_NAMES) {
       const roster = PLAYERS_RAW[team];
       for (let i = roster.length - 1; i >= 0; i--) {
@@ -471,35 +479,42 @@ export default function VPLLSimulator() {
           assignNewContract(p);
           reSigned.push({ team, name: p[0], ovr: p[4], aav: p[9], motivation });
         } else {
+          // Never let the roster dip below the floor, even for one tick — claim a
+          // same-position replacement before this player actually leaves.
+          const backfill = ensureFloorBeforeRemoval(team, p[1], usedNames);
+          if (backfill) poolSignings.push(backfill);
           roster.splice(i, 1);
           openMarket.push({ fromTeam: team, player: p, motivation });
         }
       }
     }
 
-    openMarket.sort((a, b) => b.player[4] - a.player[4]);
-    for (const entry of openMarket) {
-      const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation).filter((x) => PLAYERS_RAW[x.t].length < 30);
+    // General waiver pass: this year's fresh departures compete for a new home right
+    // alongside every player already sitting in the persistent pool from prior years
+    // (Master File 9.5 — "always available for waiver claims"), not just each other.
+    const pooledCandidates = PLAYER_POOL.splice(0, PLAYER_POOL.length).map((player) => ({ fromTeam: null, player, motivation: "Pool" }));
+    const candidates = [...openMarket, ...pooledCandidates].sort((a, b) => b.player[4] - a.player[4]);
+    for (const entry of candidates) {
+      const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation).filter((x) => PLAYERS_RAW[x.t].length < DRAFT_ROSTER_CAP);
       if (teamsRanked.length && Math.random() < 0.6) {
         const dest = teamsRanked[0].t;
         assignNewContract(entry.player);
         PLAYERS_RAW[dest].push(entry.player);
-        signed.push({ team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam, aav: entry.player[9], motivation: entry.motivation });
+        signed.push({ team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam || "Player Pool", aav: entry.player[9], motivation: entry.motivation });
       } else {
-        departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
+        if (entry.fromTeam) departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
+        PLAYER_POOL.push(entry.player); // unclaimed — stays available for a future offseason
       }
     }
 
-    // Free Agency is the last step that can shrink a roster (retirement already ran; trades
-    // and progression don't change roster size) — enforce the roster floor here so no team
-    // heads into the season short-handed or missing a position group entirely.
-    const usedNames = new Set();
-    for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+    // Safety net for anything the per-removal guard above couldn't have anticipated
+    // (there shouldn't be much left to do here, but this is the last offseason step
+    // that can shrink a roster, so it's the last chance to catch it).
     const emergencySigned = [];
     for (const team of TEAM_NAMES) emergencySigned.push(...enforceRosterFloor(team, usedNames));
 
     setDataVersion((v) => v + 1);
-    setOffseason((prev) => ({ ...prev, freeAgency: { reSigned, signed, departed, emergencySigned } }));
+    setOffseason((prev) => ({ ...prev, freeAgency: { reSigned, signed, departed, emergencySigned, poolSignings } }));
     await persistLeagueData();
     setOffseasonBusy(false);
   }, [combinedCupStandings]);
@@ -575,18 +590,26 @@ export default function VPLLSimulator() {
   const runRetirementStep = useCallback(async () => {
     setOffseasonBusy(true);
     await new Promise((r) => setTimeout(r, 250));
-    const retirees = [];
+    const usedNames = new Set();
+    for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+    for (const p of PLAYER_POOL) usedNames.add(p[0]);
+
+    const retirees = [], poolSignings = [];
     for (const teamName of TEAM_NAMES) {
       const roster = PLAYERS_RAW[teamName];
       for (let i = roster.length - 1; i >= 0; i--) {
         if (evaluateRetirement(roster[i])) {
           retirees.push({ team: teamName, name: roster[i][0], age: roster[i][3], pos: roster[i][1] });
+          // Never let the roster dip below the floor, even for one tick — claim a
+          // same-position replacement before the retiree actually leaves.
+          const backfill = ensureFloorBeforeRemoval(teamName, roster[i][1], usedNames);
+          if (backfill) poolSignings.push(backfill);
           roster.splice(i, 1);
         }
       }
     }
     setDataVersion((v) => v + 1);
-    setOffseason((prev) => ({ ...prev, retirement: { retirees } }));
+    setOffseason((prev) => ({ ...prev, retirement: { retirees, poolSignings } }));
     await persistLeagueData();
     setOffseasonBusy(false);
   }, []);
@@ -609,6 +632,7 @@ export default function VPLLSimulator() {
     // already respects the floor; this only ever trims down to the season cap.
     let rosterCuts = 0;
     for (const team of TEAM_NAMES) rosterCuts += cutRosterToSize(team, SEASON_ROSTER_CAP).length;
+    maintainPlayerPool(); // age the pool a year, retire eligible veterans out of it, trim excess
 
     const summary = {
       year: yearNumber,
@@ -1197,6 +1221,38 @@ export default function VPLLSimulator() {
 
         {activeTab === "offseason" && (
           <section>
+            <div className="vpll-week-block" style={{ marginBottom: 18 }}>
+              <div className="vpll-week-label">Player Pool ({PLAYER_POOL.length})</div>
+              <div className="vpll-info-banner">
+                Cut and unsigned players land here instead of vanishing (Master File 9.5) — any
+                team can claim one off the pool during Free Agency, and a team that would fall
+                below the {MIN_ROSTER_SIZE}-player roster floor draws from here first.
+              </div>
+              {PLAYER_POOL.length === 0 ? (
+                <div style={{ fontSize: 12.5, fontFamily: "JetBrains Mono, monospace", color: "var(--ink-soft)", padding: "6px 12px" }}>
+                  Empty — nobody's between teams right now.
+                </div>
+              ) : (
+                <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                  {Object.entries(POS_NAME).map(([pos, label]) => {
+                    const atPos = PLAYER_POOL.filter((p) => p[1] === pos).sort((a, b) => b[4] - a[4]);
+                    if (atPos.length === 0) return null;
+                    return (
+                      <div key={pos} style={{ marginBottom: 6 }}>
+                        <div className="vpll-progress-label" style={{ margin: "6px 0 2px" }}>{label} ({atPos.length})</div>
+                        {atPos.map((p, i) => (
+                          <div className="vpll-game-row" key={i}>
+                            <span className="matchup">{p[0]}</span>
+                            <span className="played">OVR {p[4]} · Age {p[3]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {!bothTrophiesDecided && (
               <div className="vpll-empty">
                 The offseason unlocks once both the Corkum and Culkin Trophy Finals are complete for Year {yearNumber}.
@@ -1276,6 +1332,17 @@ export default function VPLLSimulator() {
                           <span className="played">Age {r.age}</span>
                         </div>
                       ))}
+                      {offseason.retirement.poolSignings?.length > 0 && (
+                        <>
+                          <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Roster Floor Backfills</div>
+                          {offseason.retirement.poolSignings.map((s, i) => (
+                            <div className="vpll-game-row" key={i}>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={s.team} size={18} /> {s.team} signs {s.name} ({POS_NAME[s.pos]}){s.source === "pool" ? " — off the Player Pool" : ""}</span>
+                              <span className="played">OVR {s.ovr}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -1304,12 +1371,23 @@ export default function VPLLSimulator() {
                           ))}
                         </>
                       )}
+                      {offseason.freeAgency.poolSignings?.length > 0 && (
+                        <>
+                          <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Roster Floor Backfills</div>
+                          {offseason.freeAgency.poolSignings.map((s, i) => (
+                            <div className="vpll-game-row" key={i}>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={s.team} size={18} /> {s.team} signs {s.name} ({POS_NAME[s.pos]}){s.source === "pool" ? " — off the Player Pool" : ""}</span>
+                              <span className="played">OVR {s.ovr}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
                       {offseason.freeAgency.emergencySigned?.length > 0 && (
                         <>
-                          <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Emergency Camp Signings (roster floor)</div>
+                          <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Emergency Camp Signings</div>
                           {offseason.freeAgency.emergencySigned.map((s, i) => (
                             <div className="vpll-game-row" key={i}>
-                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={s.team} size={18} /> {s.team} signs {s.name} ({POS_NAME[s.pos]})</span>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={s.team} size={18} /> {s.team} signs {s.name} ({POS_NAME[s.pos]}){s.source === "pool" ? " — off the Player Pool" : ""}</span>
                               <span className="played">OVR {s.ovr}</span>
                             </div>
                           ))}

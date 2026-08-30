@@ -31,19 +31,30 @@ behavior changed along the way.
 
 Current module layout:
 - `src/data/` — `rawData.js` (embedded `RAW_DATA`: 32 teams, 800 players, 96 coaches, name pools,
-  plus `PRISTINE_YEAR1`), `migrations.js` (one-time LSM position migration), `reset.js`
-  (`resetLeagueDataToYear1()`, the single source of truth the app and the test harness both use)
+  plus `PRISTINE_YEAR1`, plus `PLAYER_POOL` — the persistent waiver pool, a plain live array
+  starting empty every Year 1 rather than embedded seed data), `migrations.js` (one-time LSM
+  position migration), `reset.js` (`resetLeagueDataToYear1()`, the single source of truth the app
+  and the test harness both use — also clears `PLAYER_POOL`)
 - `src/engine/` — one module per subsystem: `mathHelpers`, `contracts` (salary cap), `ratings`
   (roster→rating feedback loop), `simulation` (scoring formula, indoor/outdoor balance, OT,
   2-point cycle, injuries), `boxScore` (goal attribution), `schedule` (256-game generator),
   `trades` (autonomous + manual override), `standings`, `playoffs` (wild card → regional semis →
   regional final → conf final → trophy), `progression` (zero-sum tag progression), `draft`
-  (need-aware), `coaching` (carousel), `retirement`, `roster` (roster-size caps/floor: 32 after
-  the draft, 28 season cap applied as a training-camp cut at year-start, 24 minimum enforced at
-  the end of Free Agency, with per-position minimums so a cut or a shortfall can never leave a
-  team without enough bodies at a position — Free Agency itself still lives in `App.jsx`'s
-  `runFreeAgencyStep`/`scripts/lib/simulateLeague.mjs`'s `runFreeAgency`, not its own module, the
-  one subsystem still duplicated rather than shared)
+  (need-aware), `coaching` (carousel), `retirement`, `roster` (roster-size caps/floor AND the
+  persistent player pool — Master File 9.5/9.7, tuned to the Commissioner's explicit numbers
+  rather than the doc's 20-25 band: 32-player cap after the draft, a 28-player training-camp cut
+  applied once at year-start, a 24-player floor with per-position minimums so no cut or shortfall
+  ever leaves a team without enough bodies at a position. Cut and unsigned players land in
+  `PLAYER_POOL` instead of vanishing; `ensureFloorBeforeRemoval()` claims a replacement from the
+  pool *before* a retirement or an unsigned departure actually happens, so a roster never dips
+  below the floor even for one offseason tick — `enforceRosterFloor()` is the belt-and-suspenders
+  safety net after that. `maintainPlayerPool()` ages pool players a year, retires eligible
+  veterans out of it on the same rules as rostered players, and trims each position back to
+  `MAX_POOL_PER_POSITION` so an unclaimed pool can't grow forever. Free Agency's general waiver
+  pass (every team can claim any pool player, not just this year's fresh cuts) still lives in
+  `App.jsx`'s `runFreeAgencyStep`/`scripts/lib/simulateLeague.mjs`'s `runFreeAgency`, not
+  `roster.js` itself — Free Agency overall is the one subsystem still duplicated across App.jsx
+  and the harness rather than shared as its own module)
 - `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
@@ -56,7 +67,7 @@ Current module layout:
 - `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
   simulation harness and CLI report (see "Testing workflow" below)
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
-  `draft-lottery.test.js`, `roster-caps.test.js`
+  `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -138,11 +149,15 @@ real automated suite instead of the fully-manual process this section used to de
   (hand-built fixtures proving the Conference Record → Head-to-Head tiebreak cascade, including
   N-way ties scoped to just the tied teams), `draft-lottery.test.js` (large-sample statistical
   check that the NBA-style fixed-odds lottery draw — see below — actually produces the intended
-  per-rank probabilities, plus structural invariants on pool size/order), and `roster-caps.test.js`
+  per-rank probabilities, plus structural invariants on pool size/order), `roster-caps.test.js`
   (hand-built rosters proving the 32/28/24 cap-cut-floor rules and the per-position minimums,
   including that a cut never drops a position below its floor and a floor top-up never ignores a
-  position shortfall just because the total count is already fine). All run in well under a
-  second combined.
+  position shortfall just because the total count is already fine), and `player-pool.test.js`
+  (the persistent waiver pool: cuts feed it instead of vanishing, claims prefer a real pool player
+  over generating a fresh one, a claim for a specific position never silently substitutes the
+  wrong one, the roster never dips below the floor even momentarily across a chain of
+  retirements/departures, and `maintainPlayerPool()`'s aging/retirement/size-cap upkeep). All run
+  in well under a second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,

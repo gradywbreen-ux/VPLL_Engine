@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { PLAYERS_RAW } from "../src/data/rawData.js";
+import { PLAYERS_RAW, PLAYER_POOL } from "../src/data/rawData.js";
 import {
   cutRosterToSize, enforceRosterFloor,
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, POSITION_MINIMUMS,
@@ -28,13 +28,18 @@ function makePlayer(name, pos, overall) {
   return [name, pos, "R", 26, overall, 0, 50, 5, 60, 20000, 3, "S", null];
 }
 
+// PLAYER_POOL is module-level state shared across every test in this file (cutRosterToSize
+// pushes into it) — clear it around each test so one test's cuts can't feed the next test's
+// claimFromPool()/enforceRosterFloor() calls.
 function withFreshRoster(roster, fn) {
   const original = PLAYERS_RAW[TEAM];
   PLAYERS_RAW[TEAM] = roster;
+  PLAYER_POOL.length = 0;
   try {
     return fn();
   } finally {
     PLAYERS_RAW[TEAM] = original;
+    PLAYER_POOL.length = 0;
   }
 }
 
@@ -56,14 +61,16 @@ test("cutRosterToSize trims down to the target size, releasing the lowest overal
 test("cutRosterToSize never cuts a position below its floor, even if it means keeping a weaker player", () => {
   // Exactly at the goalie floor (2) with a much lower overall than everyone
   // else — a naive "always cut the worst" pass would release a goalie and
-  // leave the team with only 1.
+  // leave the team with only 1. Target size forces 2 real cuts (28 -> 26),
+  // so the floor protection is actually exercised, not vacuously true.
   const roster = [
     ...Array.from({ length: 26 }, (_, i) => makePlayer(`Mid ${i}`, "M", 70)),
     makePlayer("Weak Goalie 1", "G", 30),
     makePlayer("Weak Goalie 2", "G", 31),
   ];
   withFreshRoster(roster, () => {
-    cutRosterToSize(TEAM, SEASON_ROSTER_CAP);
+    const cuts = cutRosterToSize(TEAM, SEASON_ROSTER_CAP - 2);
+    assert.equal(cuts.length, 2, "should actually have cut 2 players");
     const counts = positionCounts(PLAYERS_RAW[TEAM]);
     assert.equal(counts.G, POSITION_MINIMUMS.G, "both goalies should survive despite being the lowest-overall players");
   });
