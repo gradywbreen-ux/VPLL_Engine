@@ -30,6 +30,7 @@ import { applyLeagueProgression } from "../../src/engine/progression.js";
 import { buildDraftOrder, generateProspect } from "../../src/engine/draft.js";
 import { evaluateFiring, generateFreshCoach } from "../../src/engine/coaching.js";
 import { evaluateRetirement } from "../../src/engine/retirement.js";
+import { cutRosterToSize, enforceRosterFloor, DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE } from "../../src/engine/roster.js";
 
 /* ---------- Season + playoffs, one season type, fully to completion ---------- */
 function simulateFullSeasonResults(schedule, isIndoor) {
@@ -115,14 +116,7 @@ function runDraft(combinedCupStandings) {
       overallPick++;
     }
   }
-  for (const team of TEAM_NAMES) {
-    const roster = PLAYERS_RAW[team];
-    while (roster.length > 32) {
-      let worstIdx = 0;
-      for (let i = 1; i < roster.length; i++) if (roster[i][4] < roster[worstIdx][4]) worstIdx = i;
-      roster.splice(worstIdx, 1);
-    }
-  }
+  for (const team of TEAM_NAMES) cutRosterToSize(team, DRAFT_ROSTER_CAP);
   return { draftOrder, results };
 }
 
@@ -229,7 +223,15 @@ function runFreeAgency(combinedCupStandings) {
       departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
     }
   }
-  return { reSigned, signed, departed };
+
+  // Free Agency is the last step that can shrink a roster — enforce the floor here (mirrors
+  // App.jsx's runFreeAgencyStep exactly).
+  const usedNames = new Set();
+  for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+  const emergencySigned = [];
+  for (const team of TEAM_NAMES) emergencySigned.push(...enforceRosterFloor(team, usedNames));
+
+  return { reSigned, signed, departed, emergencySigned };
 }
 
 /* ---------- Stats ---------- */
@@ -243,7 +245,7 @@ function rosterIntegrityViolations() {
   const violations = [];
   for (const name of TEAM_NAMES) {
     const roster = PLAYERS_RAW[name];
-    if (roster.length < 15 || roster.length > 32) violations.push(`${name}: roster size ${roster.length} out of [15,32]`);
+    if (roster.length < MIN_ROSTER_SIZE || roster.length > SEASON_ROSTER_CAP) violations.push(`${name}: roster size ${roster.length} out of [${MIN_ROSTER_SIZE},${SEASON_ROSTER_CAP}]`);
     const seen = new Set();
     for (const p of roster) {
       if (seen.has(p[0])) violations.push(`${name}: duplicate player "${p[0]}"`);
@@ -287,6 +289,10 @@ export function simulateOneYear() {
   runFreeAgency(combinedCupStandings);
   runTradeEngine(combinedCupStandings);
   applyLeagueProgression(combinedCupStandings);
+
+  // Training camp cuts (Master File 9.7) — final roster-size pass before the next
+  // year's seasons open, mirrors App.jsx's beginYear2.
+  for (const team of TEAM_NAMES) cutRosterToSize(team, SEASON_ROSTER_CAP);
 
   const ratingSD = stddev(TEAM_NAMES.map((n) => TEAMS[n].score));
   const ratingMean = mean(TEAM_NAMES.map((n) => TEAMS[n].score));

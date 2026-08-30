@@ -38,7 +38,12 @@ Current module layout:
   2-point cycle, injuries), `boxScore` (goal attribution), `schedule` (256-game generator),
   `trades` (autonomous + manual override), `standings`, `playoffs` (wild card → regional semis →
   regional final → conf final → trophy), `progression` (zero-sum tag progression), `draft`
-  (need-aware), `coaching` (carousel), `retirement`
+  (need-aware), `coaching` (carousel), `retirement`, `roster` (roster-size caps/floor: 32 after
+  the draft, 28 season cap applied as a training-camp cut at year-start, 24 minimum enforced at
+  the end of Free Agency, with per-position minimums so a cut or a shortfall can never leave a
+  team without enough bodies at a position — Free Agency itself still lives in `App.jsx`'s
+  `runFreeAgencyStep`/`scripts/lib/simulateLeague.mjs`'s `runFreeAgency`, not its own module, the
+  one subsystem still duplicated rather than shared)
 - `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
@@ -51,7 +56,7 @@ Current module layout:
 - `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
   simulation harness and CLI report (see "Testing workflow" below)
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
-  `draft-lottery.test.js`
+  `draft-lottery.test.js`, `roster-caps.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -131,9 +136,12 @@ real automated suite instead of the fully-manual process this section used to de
   Currently: `data-integrity.test.js` (league data shape, no duplicate rostered players, schedule
   generator sanity), `multi-year-parity.test.js` (see below), `playoff-tiebreakers.test.js`
   (hand-built fixtures proving the Conference Record → Head-to-Head tiebreak cascade, including
-  N-way ties scoped to just the tied teams), and `draft-lottery.test.js` (large-sample statistical
+  N-way ties scoped to just the tied teams), `draft-lottery.test.js` (large-sample statistical
   check that the NBA-style fixed-odds lottery draw — see below — actually produces the intended
-  per-rank probabilities, plus structural invariants on pool size/order). All run in well under a
+  per-rank probabilities, plus structural invariants on pool size/order), and `roster-caps.test.js`
+  (hand-built rosters proving the 32/28/24 cap-cut-floor rules and the per-position minimums,
+  including that a cut never drops a position below its floor and a floor top-up never ignores a
+  position shortfall just because the total count is already fine). All run in well under a
   second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,

@@ -19,6 +19,7 @@ import {
 } from "./engine/playoffs.js";
 import { applyLeagueProgression } from "./engine/progression.js";
 import { buildDraftOrder, generateProspect } from "./engine/draft.js";
+import { cutRosterToSize, enforceRosterFloor, DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP } from "./engine/roster.js";
 import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
 import { evaluateRetirement } from "./engine/retirement.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
@@ -417,15 +418,9 @@ export default function VPLLSimulator() {
         overallPick++;
       }
     }
-    // keep rosters from ballooning indefinitely — release the weakest depth once over 32
-    for (const team of TEAM_NAMES) {
-      const roster = PLAYERS_RAW[team];
-      while (roster.length > 32) {
-        let worstIdx = 0;
-        for (let i = 1; i < roster.length; i++) if (roster[i][4] < roster[worstIdx][4]) worstIdx = i;
-        roster.splice(worstIdx, 1);
-      }
-    }
+    // keep rosters from ballooning indefinitely — release the weakest depth once over the
+    // post-draft cap, without cutting any position below its floor
+    for (const team of TEAM_NAMES) cutRosterToSize(team, DRAFT_ROSTER_CAP);
 
     setDataVersion((v) => v + 1);
     setOffseason((prev) => ({ ...prev, draft: { draftOrder, results } }));
@@ -495,8 +490,16 @@ export default function VPLLSimulator() {
       }
     }
 
+    // Free Agency is the last step that can shrink a roster (retirement already ran; trades
+    // and progression don't change roster size) — enforce the roster floor here so no team
+    // heads into the season short-handed or missing a position group entirely.
+    const usedNames = new Set();
+    for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+    const emergencySigned = [];
+    for (const team of TEAM_NAMES) emergencySigned.push(...enforceRosterFloor(team, usedNames));
+
     setDataVersion((v) => v + 1);
-    setOffseason((prev) => ({ ...prev, freeAgency: { reSigned, signed, departed } }));
+    setOffseason((prev) => ({ ...prev, freeAgency: { reSigned, signed, departed, emergencySigned } }));
     await persistLeagueData();
     setOffseasonBusy(false);
   }, [combinedCupStandings]);
@@ -601,6 +604,12 @@ export default function VPLLSimulator() {
   const allOffseasonStepsComplete = offseason.draft && offseason.coaching && offseason.retirement && offseason.progression && offseason.freeAgency && offseason.trades;
 
   const beginYear2 = useCallback(async () => {
+    // Training camp cuts (Master File 9.7) — the final roster-size pass of the offseason,
+    // right before the new season opens. Every earlier step (draft, retirement, free agency)
+    // already respects the floor; this only ever trims down to the season cap.
+    let rosterCuts = 0;
+    for (const team of TEAM_NAMES) rosterCuts += cutRosterToSize(team, SEASON_ROSTER_CAP).length;
+
     const summary = {
       year: yearNumber,
       corkumChampion: seasons.corkum?.playoffs?.champion,
@@ -609,6 +618,7 @@ export default function VPLLSimulator() {
       draftFirstPick: offseason.draft?.results?.[0],
       coachesFired: offseason.coaching?.fired?.length || 0,
       retirements: offseason.retirement?.retirees?.length || 0,
+      rosterCuts,
     };
     const newHistory = [...yearHistory, summary];
     const newYearNumber = yearNumber + 1;
@@ -1290,6 +1300,17 @@ export default function VPLLSimulator() {
                             <div className="vpll-game-row" key={i}>
                               <span className="matchup vpll-team-name-row">{s.name} (OVR {s.ovr}, {s.motivation}): {s.from} → <TeamLogo teamName={s.team} size={18} /> {s.team}</span>
                               <span className="played">{formatMoney(s.aav)}/yr</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {offseason.freeAgency.emergencySigned?.length > 0 && (
+                        <>
+                          <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Emergency Camp Signings (roster floor)</div>
+                          {offseason.freeAgency.emergencySigned.map((s, i) => (
+                            <div className="vpll-game-row" key={i}>
+                              <span className="matchup vpll-team-name-row"><TeamLogo teamName={s.team} size={18} /> {s.team} signs {s.name} ({POS_NAME[s.pos]})</span>
+                              <span className="played">OVR {s.ovr}</span>
                             </div>
                           ))}
                         </>
