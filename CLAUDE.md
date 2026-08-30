@@ -50,7 +50,8 @@ Current module layout:
   Press Box), wired to all of the above
 - `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
   simulation harness and CLI report (see "Testing workflow" below)
-- `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`
+- `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
+  `draft-lottery.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -128,7 +129,12 @@ real automated suite instead of the fully-manual process this section used to de
 
 - **`npm test`** — runs `test/*.test.js` on Node's built-in test runner (no extra dependency).
   Currently: `data-integrity.test.js` (league data shape, no duplicate rostered players, schedule
-  generator sanity) and `multi-year-parity.test.js` (see below). Both run in well under a second.
+  generator sanity), `multi-year-parity.test.js` (see below), `playoff-tiebreakers.test.js`
+  (hand-built fixtures proving the Conference Record → Head-to-Head tiebreak cascade, including
+  N-way ties scoped to just the tied teams), and `draft-lottery.test.js` (large-sample statistical
+  check that the NBA-style fixed-odds lottery draw — see below — actually produces the intended
+  per-rank probabilities, plus structural invariants on pool size/order). All run in well under a
+  second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
