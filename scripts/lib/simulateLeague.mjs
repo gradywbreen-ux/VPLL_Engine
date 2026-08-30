@@ -49,11 +49,11 @@ function simulateFullSeasonResults(schedule, isIndoor) {
   return results;
 }
 
-function simulateFullPlayoffs(table, isIndoor = false) {
-  const playoffs = initPlayoffs(table);
+function simulateFullPlayoffs(table, schedule, results, isIndoor = false) {
+  const playoffs = initPlayoffs(table, schedule, results);
   simulateWildcardRound(playoffs);
-  simulateRegionalSemisRound(playoffs, table);
-  simulateRegionalFinalRound(playoffs, table);
+  simulateRegionalSemisRound(playoffs, table, schedule, results);
+  simulateRegionalFinalRound(playoffs, table, schedule, results);
   simulateConferenceFinalRound(playoffs, table, isIndoor);
   simulateTrophyFinalSeries(playoffs);
   return playoffs;
@@ -264,12 +264,12 @@ export function simulateOneYear() {
   const corkumSchedule = generateFullSchedule();
   const corkumResults = simulateFullSeasonResults(corkumSchedule, false);
   const corkumTable = computeStandings(corkumSchedule, corkumResults);
-  const corkumPlayoffs = simulateFullPlayoffs(corkumTable, false);
+  const corkumPlayoffs = simulateFullPlayoffs(corkumTable, corkumSchedule, corkumResults, false);
 
   const culkinSchedule = generateFullSchedule();
   const culkinResults = simulateFullSeasonResults(culkinSchedule, true);
   const culkinTable = computeStandings(culkinSchedule, culkinResults);
-  const culkinPlayoffs = simulateFullPlayoffs(culkinTable, true);
+  const culkinPlayoffs = simulateFullPlayoffs(culkinTable, culkinSchedule, culkinResults, true);
 
   const combinedCupStandings = computeCombinedCupStandings(corkumTable, corkumPlayoffs, culkinTable, culkinPlayoffs);
   const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0].team;

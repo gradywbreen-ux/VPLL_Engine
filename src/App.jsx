@@ -228,7 +228,8 @@ export default function VPLLSimulator() {
   const generateBracket = useCallback(async (seasonType) => {
     const table = standingsFor[seasonType];
     if (!table) return;
-    const playoffs = initPlayoffs(table);
+    const season = seasons[seasonType];
+    const playoffs = initPlayoffs(table, season.schedule, season.results);
     const newSeasonObj = { ...seasons[seasonType], playoffs };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
   }, [seasons, standingsFor, persistSeasons]);
@@ -241,8 +242,8 @@ export default function VPLLSimulator() {
     const playoffs = JSON.parse(JSON.stringify(season.playoffs)); // deep clone for safe mutation
     const table = standingsFor[seasonType];
     if (round === "wildcard") simulateWildcardRound(playoffs);
-    else if (round === "regionalSemis") simulateRegionalSemisRound(playoffs, table);
-    else if (round === "regionalFinal") simulateRegionalFinalRound(playoffs, table);
+    else if (round === "regionalSemis") simulateRegionalSemisRound(playoffs, table, season.schedule, season.results);
+    else if (round === "regionalFinal") simulateRegionalFinalRound(playoffs, table, season.schedule, season.results);
     else if (round === "conferenceFinal") simulateConferenceFinalRound(playoffs, table, seasonType === "culkin");
     else if (round === "trophyFinal") simulateTrophyFinalSeries(playoffs);
     const newSeasonObj = { ...season, playoffs };

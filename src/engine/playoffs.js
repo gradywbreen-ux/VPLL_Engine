@@ -13,26 +13,83 @@ import { simulateAllStarGame } from "./allStarGame.js";
    Regular season: 1 Commissioners Cup point per win. Playoffs: 2 points per win.
    ============================================================ */
 
-export function rankDivision(table, teamList) {
-  return [...teamList].sort((a, b) =>
-    table[b].points - table[a].points || table[b].gd - table[a].gd || table[b].gf - table[a].gf
-  );
+/* ---------- Tiebreakers (Master File 2.3/2.4) ----------
+   Overall Record -> Conference Record -> Head to Head -> Goal Differential,
+   with Head to Head recomputed among only whichever teams are still tied at
+   that point (2.4's "among tied teams"), not the whole division. Goals For
+   is kept as a final fallback beyond the documented four criteria, purely
+   to stay deterministic in the vanishingly unlikely case all four tie. */
+
+function conferenceRecordFor(team, schedule, results) {
+  const conf = TEAMS[team].conf;
+  let points = 0;
+  for (const g of schedule) {
+    if (g.home !== team && g.away !== team) continue;
+    const opponent = g.home === team ? g.away : g.home;
+    if (TEAMS[opponent].conf !== conf) continue; // only intra-conference games count
+    const res = results[g.id];
+    if (!res) continue;
+    const winner = res.homeScore > res.awayScore ? g.home : g.away;
+    if (winner === team) points += 1;
+  }
+  return points;
 }
 
-export function betterSeed(table, teamA, teamB) {
-  const a = table[teamA], b = table[teamB];
-  if (a.points !== b.points) return a.points > b.points ? teamA : teamB;
-  if (a.gd !== b.gd) return a.gd > b.gd ? teamA : teamB;
-  return a.gf >= b.gf ? teamA : teamB;
+function headToHeadRecord(teamList, schedule, results) {
+  const teamSet = new Set(teamList);
+  const points = {};
+  for (const t of teamList) points[t] = 0;
+  for (const g of schedule) {
+    if (!teamSet.has(g.home) || !teamSet.has(g.away)) continue;
+    const res = results[g.id];
+    if (!res) continue;
+    const winner = res.homeScore > res.awayScore ? g.home : g.away;
+    points[winner] += 1;
+  }
+  return points;
 }
 
-export function buildRegionSeeds(table, regionKey) {
+// Splits teamList into groups sharing the same keyFn() value, ordered by
+// that value descending — used to cascade to the next tiebreaker only among
+// teams still tied after the previous one.
+function tiebreakGroups(teamList, keyFn) {
+  const sorted = [...teamList].sort((a, b) => keyFn(b) - keyFn(a));
+  const groups = [];
+  for (const t of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && keyFn(last[0]) === keyFn(t)) last.push(t);
+    else groups.push([t]);
+  }
+  return groups;
+}
+
+export function rankDivision(table, teamList, schedule, results) {
+  let order = [teamList];
+  for (const keyFn of [(t) => table[t].points, (t) => conferenceRecordFor(t, schedule, results)]) {
+    order = order.flatMap((group) => (group.length > 1 ? tiebreakGroups(group, keyFn) : [group]));
+  }
+  order = order.flatMap((group) => {
+    if (group.length <= 1) return [group];
+    const h2h = headToHeadRecord(group, schedule, results);
+    return tiebreakGroups(group, (t) => h2h[t]);
+  });
+  for (const keyFn of [(t) => table[t].gd, (t) => table[t].gf]) {
+    order = order.flatMap((group) => (group.length > 1 ? tiebreakGroups(group, keyFn) : [group]));
+  }
+  return order.flat();
+}
+
+export function betterSeed(table, teamA, teamB, schedule, results) {
+  return rankDivision(table, [teamA, teamB], schedule, results)[0];
+}
+
+export function buildRegionSeeds(table, regionKey, schedule, results) {
   const regionTeams = BY_REGION[regionKey];
   const divs = [...new Set(regionTeams.map((t) => TEAMS[t].div))];
   const div1Teams = regionTeams.filter((t) => TEAMS[t].div === divs[0]);
   const div2Teams = regionTeams.filter((t) => TEAMS[t].div === divs[1]);
-  const div1Ranked = rankDivision(table, div1Teams);
-  const div2Ranked = rankDivision(table, div2Teams);
+  const div1Ranked = rankDivision(table, div1Teams, schedule, results);
+  const div2Ranked = rankDivision(table, div2Teams, schedule, results);
   return {
     regionKey,
     div1: { name: divs[0], winner: div1Ranked[0], seed2: div1Ranked[1], seed3: div1Ranked[2], missed: div1Ranked[3] },
@@ -40,24 +97,24 @@ export function buildRegionSeeds(table, regionKey) {
   };
 }
 
-export function buildAllSeeds(table) {
+export function buildAllSeeds(table, schedule, results) {
   const seeds = {};
-  for (const regionKey of Object.keys(BY_REGION)) seeds[regionKey] = buildRegionSeeds(table, regionKey);
+  for (const regionKey of Object.keys(BY_REGION)) seeds[regionKey] = buildRegionSeeds(table, regionKey, schedule, results);
   return seeds;
 }
 
 export let playoffGameId = 0;
-export function initPlayoffs(table) {
+export function initPlayoffs(table, schedule, results) {
   playoffGameId = 0;
-  const seeds = buildAllSeeds(table);
+  const seeds = buildAllSeeds(table, schedule, results);
   const wildcard = [];
   for (const regionKey of Object.keys(seeds)) {
     const s = seeds[regionKey];
     // higher seed (division's #2) hosts the wildcard game
-    const g1Home = betterSeed(table, s.div1.seed2, s.div1.seed3);
+    const g1Home = betterSeed(table, s.div1.seed2, s.div1.seed3, schedule, results);
     wildcard.push({ id: playoffGameId++, round: "wildcard", region: regionKey, bracket: s.div1.name,
       home: g1Home, away: g1Home === s.div1.seed2 ? s.div1.seed3 : s.div1.seed2, winner: null, result: null });
-    const g2Home = betterSeed(table, s.div2.seed2, s.div2.seed3);
+    const g2Home = betterSeed(table, s.div2.seed2, s.div2.seed3, schedule, results);
     wildcard.push({ id: playoffGameId++, round: "wildcard", region: regionKey, bracket: s.div2.name,
       home: g2Home, away: g2Home === s.div2.seed2 ? s.div2.seed3 : s.div2.seed2, winner: null, result: null });
   }
@@ -96,7 +153,7 @@ export function simulateWildcardRound(playoffs) {
   }
 }
 
-export function simulateRegionalSemisRound(playoffs, table) {
+export function simulateRegionalSemisRound(playoffs, table, schedule, results) {
   for (const g of playoffs.regionalSemis) {
     const r = playGame(g.home, g.away);
     g.winner = r.winner; g.result = r;
@@ -104,13 +161,13 @@ export function simulateRegionalSemisRound(playoffs, table) {
   }
   for (const regionKey of Object.keys(playoffs.seeds)) {
     const semis = playoffs.regionalSemis.filter((g) => g.region === regionKey);
-    const home = betterSeed(table, semis[0].winner, semis[1].winner);
+    const home = betterSeed(table, semis[0].winner, semis[1].winner, schedule, results);
     const away = home === semis[0].winner ? semis[1].winner : semis[0].winner;
     playoffs.regionalFinal.push({ id: playoffGameId++, round: "regionalFinal", region: regionKey, home, away, winner: null, result: null });
   }
 }
 
-export function simulateRegionalFinalRound(playoffs, table) {
+export function simulateRegionalFinalRound(playoffs, table, schedule, results) {
   for (const g of playoffs.regionalFinal) {
     const r = playGame(g.home, g.away);
     g.winner = r.winner; g.result = r;
@@ -123,7 +180,7 @@ export function simulateRegionalFinalRound(playoffs, table) {
   }
   for (const conf of Object.keys(byConf)) {
     const [a, b] = byConf[conf];
-    const home = betterSeed(table, a, b);
+    const home = betterSeed(table, a, b, schedule, results);
     const away = home === a ? b : a;
     playoffs.conferenceFinal.push({ id: playoffGameId++, round: "conferenceFinal", conference: conf, home, away, winner: null, result: null });
   }
