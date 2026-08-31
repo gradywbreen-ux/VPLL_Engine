@@ -1,6 +1,6 @@
 import { TEAMS, TEAM_NAMES, PLAYERS_RAW, COACHES } from "../data/rawData.js";
 import { clamp } from "./mathHelpers.js";
-import { SALARY_CAP, teamPayroll } from "./contracts.js";
+import { SALARY_CAP, teamPayroll, capFine } from "./contracts.js";
 import { avgOverallByPosition, weakestPosition, strongestPosition } from "./ratings.js";
 import { HC_TAG_FIT } from "./simulation.js";
 import { shuffle } from "./schedule.js";
@@ -47,6 +47,15 @@ export function bestTradeCandidateAtPosition(team, pos, exclude) {
   const roster = PLAYERS_RAW[team].filter((p) => p[1] === pos && !exclude.has(p[0]));
   if (!roster.length) return null;
   return [...roster].sort((a, b) => b[4] - a[4])[0];
+}
+
+// Weakest tradeable body on a roster — a salary dump's fallback return when the
+// destination has no real need at the sender's weak position; the fine being avoided
+// is the point of the trade, not getting equal value back (a "throw-in" return).
+function weakestTradeCandidate(team, exclude) {
+  const roster = PLAYERS_RAW[team].filter((p) => !exclude.has(p[0]));
+  if (!roster.length) return null;
+  return [...roster].sort((a, b) => a[4] - b[4])[0];
 }
 
 export function executeTrade(teamA, teamB, playerA, playerB) {
@@ -124,5 +133,40 @@ export function runTradeEngine(standingsMap) {
       }
     }
   }
+
+  // 3. Salary dumps — teams already paying a luxury fine (Free Agency Spec §5) get a
+  // bonus chance to initiate a trade prioritizing their highest-AAV movable player,
+  // even for a below-market return, since the fine itself is the cost being avoided.
+  // Distinct from both triggers above: not driven by a player's unhappiness or by a
+  // complementary need match, purely by the team's own cap math.
+  const SALARY_DUMP_CHANCE = 0.5;
+  for (const team of teamsShuffled) {
+    if (tradesThisCycle[team] >= MAX_TRADES_PER_TEAM) continue;
+    if (capFine(teamPayroll(team)) <= 0) continue; // not actually paying a fine — nothing to duck
+    if (Math.random() > SALARY_DUMP_CHANCE) continue;
+    const movable = PLAYERS_RAW[team].filter((p) => !tradedNames.has(p[0]));
+    if (!movable.length) continue;
+    const highestAAV = [...movable].sort((a, b) => (b[9] || 0) - (a[9] || 0))[0];
+    const destCandidates = TEAM_NAMES
+      .filter((t) => t !== team && tradesThisCycle[t] < MAX_TRADES_PER_TEAM)
+      .map((t) => ({ t, room: SALARY_CAP - teamPayroll(t) }))
+      .filter((x) => x.room > (highestAAV[9] || 10000))
+      .sort((a, b) => b.room - a.room);
+    if (!destCandidates.length) continue;
+    const destTeam = destCandidates[0].t;
+    const returnPlayer = bestTradeCandidateAtPosition(destTeam, weakestPosition(team), tradedNames)
+      || weakestTradeCandidate(destTeam, tradedNames);
+    if (!returnPlayer || returnPlayer[0] === highestAAV[0]) continue;
+    if (executeTrade(team, destTeam, highestAAV, returnPlayer)) {
+      tradedNames.add(highestAAV[0]); tradedNames.add(returnPlayer[0]);
+      tradesThisCycle[team]++; tradesThisCycle[destTeam]++;
+      trades.push({
+        teamA: team, teamB: destTeam, playerA: highestAAV[0], playerB: returnPlayer[0],
+        valueA: playerTradeValue(highestAAV), valueB: playerTradeValue(returnPlayer),
+        reason: `salary dump — ${team} shed ${highestAAV[0]}'s contract to duck the luxury tax`,
+      });
+    }
+  }
+
   return trades;
 }

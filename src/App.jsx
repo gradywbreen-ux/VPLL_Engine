@@ -7,7 +7,6 @@ import { migrateLSMIfNeeded } from "./data/migrations.js";
 import { resetLeagueDataToYear1 } from "./data/reset.js";
 import { formatMoney, rand } from "./engine/mathHelpers.js";
 import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll, capFine, bootstrapContractsIfNeeded } from "./engine/contracts.js";
-import { avgOverallByPosition } from "./engine/ratings.js";
 import { simulateGame } from "./engine/simulation.js";
 import { attributeGoals } from "./engine/boxScore.js";
 import { BY_DIVISION, generateFullSchedule } from "./engine/schedule.js";
@@ -20,11 +19,12 @@ import {
 import { applyLeagueProgression } from "./engine/progression.js";
 import { buildDraftOrder, generateProspect } from "./engine/draft.js";
 import {
-  cutRosterToSize, enforceRosterFloor, ensureFloorBeforeRemoval, maintainPlayerPool,
+  cutRosterToSize, ensureFloorBeforeRemoval, maintainPlayerPool,
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE,
 } from "./engine/roster.js";
 import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
 import { evaluateRetirement } from "./engine/retirement.js";
+import { runFreeAgency, FREE_AGENT_TIER_NAMES } from "./engine/freeAgency.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
 import { fetchArticle } from "./pressbox/api.js";
 import { STYLES } from "./styles/styles.js";
@@ -401,6 +401,7 @@ export default function VPLLSimulator() {
     const draftOrder = buildDraftOrder(standingsArr);
     const usedNames = new Set();
     for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
+    for (const p of PLAYER_POOL) usedNames.add(p[0]);
 
     // Picks are inserted into the roster immediately, so a team's later picks in the
     // same draft reflect the needs its earlier picks just addressed.
@@ -435,86 +436,9 @@ export default function VPLLSimulator() {
   const runFreeAgencyStep = useCallback(async () => {
     setOffseasonBusy(true);
     await new Promise((r) => setTimeout(r, 250));
-    const reSigned = [], departed = [], signed = [];
-    const openMarket = [];
-    const standingsMap = combinedCupStandings;
-    const usedNames = new Set();
-    for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); COACHES[t] && usedNames.add(COACHES[t].hc); }
-    for (const p of PLAYER_POOL) usedNames.add(p[0]);
-
-    function pickMotivation() {
-      const r = Math.random();
-      if (r < 0.55) return "Loyalist";
-      if (r < 0.80) return "Mercenary";
-      return "Winner";
-    }
-    function reSignChance(motivation, team) {
-      if (motivation === "Loyalist") return 0.85;
-      if (motivation === "Mercenary") return 0.30;
-      return (standingsMap[team]?.points || 0) > 20 ? 0.55 : 0.28; // Winner: stays if the team is actually winning
-    }
-    function rankTeamsForPlayer(player, motivation) {
-      const pos = player[1];
-      const candidates = TEAM_NAMES.map((t) => {
-        const room = SALARY_CAP - teamPayroll(t);
-        const posAvg = avgOverallByPosition(t)[pos];
-        const needScore = posAvg == null ? 60 : Math.max(0, 100 - posAvg);
-        return { t, room, needScore, points: standingsMap[t]?.points || 0 };
-      }).filter((x) => x.room > 8000);
-      if (motivation === "Mercenary") candidates.sort((a, b) => (b.room + b.needScore * 15000) - (a.room + a.needScore * 15000));
-      else if (motivation === "Winner") candidates.sort((a, b) => b.points - a.points || b.room - a.room);
-      else candidates.sort((a, b) => (b.needScore * 2000 + b.room) - (a.needScore * 2000 + a.room));
-      return candidates;
-    }
-
-    const poolSignings = [];
-    for (const team of TEAM_NAMES) {
-      const roster = PLAYERS_RAW[team];
-      for (let i = roster.length - 1; i >= 0; i--) {
-        const p = roster[i];
-        const yearsLeft = (p[10] || 1) - 1;
-        if (yearsLeft > 0) { p[10] = yearsLeft; continue; }
-        const motivation = pickMotivation();
-        if (Math.random() < reSignChance(motivation, team)) {
-          assignNewContract(p);
-          reSigned.push({ team, name: p[0], ovr: p[4], aav: p[9], motivation });
-        } else {
-          // Never let the roster dip below the floor, even for one tick — claim a
-          // same-position replacement before this player actually leaves.
-          const backfill = ensureFloorBeforeRemoval(team, p[1], usedNames);
-          if (backfill) poolSignings.push(backfill);
-          roster.splice(i, 1);
-          openMarket.push({ fromTeam: team, player: p, motivation });
-        }
-      }
-    }
-
-    // General waiver pass: this year's fresh departures compete for a new home right
-    // alongside every player already sitting in the persistent pool from prior years
-    // (Master File 9.5 — "always available for waiver claims"), not just each other.
-    const pooledCandidates = PLAYER_POOL.splice(0, PLAYER_POOL.length).map((player) => ({ fromTeam: null, player, motivation: "Pool" }));
-    const candidates = [...openMarket, ...pooledCandidates].sort((a, b) => b.player[4] - a.player[4]);
-    for (const entry of candidates) {
-      const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation).filter((x) => PLAYERS_RAW[x.t].length < DRAFT_ROSTER_CAP);
-      if (teamsRanked.length && Math.random() < 0.6) {
-        const dest = teamsRanked[0].t;
-        assignNewContract(entry.player);
-        PLAYERS_RAW[dest].push(entry.player);
-        signed.push({ team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam || "Player Pool", aav: entry.player[9], motivation: entry.motivation });
-      } else {
-        if (entry.fromTeam) departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
-        PLAYER_POOL.push(entry.player); // unclaimed — stays available for a future offseason
-      }
-    }
-
-    // Safety net for anything the per-removal guard above couldn't have anticipated
-    // (there shouldn't be much left to do here, but this is the last offseason step
-    // that can shrink a roster, so it's the last chance to catch it).
-    const emergencySigned = [];
-    for (const team of TEAM_NAMES) emergencySigned.push(...enforceRosterFloor(team, usedNames));
-
+    const result = runFreeAgency(combinedCupStandings);
     setDataVersion((v) => v + 1);
-    setOffseason((prev) => ({ ...prev, freeAgency: { reSigned, signed, departed, emergencySigned, poolSignings } }));
+    setOffseason((prev) => ({ ...prev, freeAgency: result }));
     await persistLeagueData();
     setOffseasonBusy(false);
   }, [combinedCupStandings]);
@@ -560,6 +484,7 @@ export default function VPLLSimulator() {
     const culkinPlayoffTeams = playoffTeamSet("culkin");
     const usedNames = new Set();
     for (const t of TEAM_NAMES) { PLAYERS_RAW[t].forEach((p) => usedNames.add(p[0])); usedNames.add(COACHES[t].hc); }
+    for (const p of PLAYER_POOL) usedNames.add(p[0]);
 
     const fired = [];
     standingsArr.forEach((entry, idx) => {
@@ -838,6 +763,7 @@ export default function VPLLSimulator() {
         culkinChampion: seasons.culkin?.playoffs?.champion || "TBD",
         cupChampion: cupChampion || "TBD",
         draft: offseason.draft, coaching: offseason.coaching, retirement: offseason.retirement, progression: offseason.progression,
+        freeAgency: offseason.freeAgency, trades: offseason.trades,
       });
       const article = await fetchArticle(prompt);
       await saveToArchive({ ...article, outlet: "Hot Stove", gameLabel: `Year ${yearNumber} Offseason`, timestamp: Date.now() });
@@ -1359,13 +1285,14 @@ export default function VPLLSimulator() {
                       <div className="vpll-info-banner">
                         {offseason.freeAgency.reSigned.length} re-signed · {offseason.freeAgency.signed.length} changed teams · {offseason.freeAgency.departed.length} released.
                         Players acted as Loyalists ({offseason.freeAgency.reSigned.filter(s => s.motivation === "Loyalist").length}), Mercenaries ({offseason.freeAgency.signed.filter(s => s.motivation === "Mercenary").length} signings), and Winners ({offseason.freeAgency.signed.filter(s => s.motivation === "Winner").length} signings).
+                        {offseason.freeAgency.signed.filter(s => s.tier === 1).length > 0 && ` ${offseason.freeAgency.signed.filter(s => s.tier === 1).length} Franchise-tier signing(s) — Hot Stove headline material.`}
                       </div>
                       {offseason.freeAgency.signed.length > 0 && (
                         <>
                           <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>Signings</div>
                           {offseason.freeAgency.signed.map((s, i) => (
                             <div className="vpll-game-row" key={i}>
-                              <span className="matchup vpll-team-name-row">{s.name} (OVR {s.ovr}, {s.motivation}): {s.from} → <TeamLogo teamName={s.team} size={18} /> {s.team}</span>
+                              <span className="matchup vpll-team-name-row">{s.name} (OVR {s.ovr}, {FREE_AGENT_TIER_NAMES[s.tier] || "?"}, {s.motivation}): {s.from} → <TeamLogo teamName={s.team} size={18} /> {s.team}</span>
                               <span className="played">{formatMoney(s.aav)}/yr</span>
                             </div>
                           ))}
@@ -1409,6 +1336,7 @@ export default function VPLLSimulator() {
                       <div className="vpll-info-banner">
                         {offseason.trades.trades.length} trades executed league-wide.
                         {offseason.trades.trades.filter(t => t.reason.includes("requested")).length > 0 && ` ${offseason.trades.trades.filter(t => t.reason.includes("requested")).length} initiated by unhappy star trade demands.`}
+                        {offseason.trades.trades.filter(t => t.reason.startsWith("salary dump")).length > 0 && ` ${offseason.trades.trades.filter(t => t.reason.startsWith("salary dump")).length} salary dump(s) to duck the luxury tax.`}
                       </div>
                       {offseason.trades.trades.map((t, i) => (
                         <div className="vpll-game-row" key={i}>

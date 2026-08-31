@@ -1,4 +1,5 @@
 import { POS_NAME, TEAMS, COACHES } from "../data/rawData.js";
+import { FREE_AGENT_TIER_NAMES } from "../engine/freeAgency.js";
 
 /* ============================================================
    PRESS BOX — Narrative Layer (Phase 5)
@@ -73,7 +74,7 @@ RULES:
 - Respond ONLY with valid JSON in exactly this shape, no markdown fences, no preamble: {"headline": "...", "body": "..."}`;
 }
 
-export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, cupChampion, draft, coaching, retirement, progression }) {
+export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, cupChampion, draft, coaching, retirement, progression, freeAgency, trades }) {
   const topPicks = draft ? draft.results.slice(0, 5).map((p) => `Pick ${p.overallPick}: ${p.team} selects ${p.prospect.name} (${POS_NAME[p.prospect.pos]}, age ${p.prospect.age}, ceiling ${p.prospect.ceiling})`).join("; ") : "draft pending";
   const firings = coaching && coaching.fired.length
     ? coaching.fired.map((f, i) => `${f.team} fired ${f.oldCoach} (${f.oldArch}), hired ${coaching.hired[i]?.newCoach} (${coaching.hired[i]?.newArch})`).join("; ")
@@ -85,6 +86,17 @@ export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, c
     ? [...progression.results].sort((a, b) => b.delta - a.delta).slice(0, 3).map((r) => `${r.team} (${r.oldScore}→${r.newScore})`).join(", ") + "; fallers: " +
       [...progression.results].sort((a, b) => a.delta - b.delta).slice(0, 3).map((r) => `${r.team} (${r.oldScore}→${r.newScore})`).join(", ")
     : "progression pending";
+  const topSignings = freeAgency && freeAgency.signed.length
+    ? [...freeAgency.signed].sort((a, b) => (b.aav || 0) - (a.aav || 0)).slice(0, 5)
+      .map((s) => `${s.name} (${FREE_AGENT_TIER_NAMES[s.tier] || "unranked"}, ${s.motivation}): ${s.from} → ${s.team}`).join("; ")
+    : "a quiet free agency period";
+  const salaryDumps = trades && trades.trades.length
+    ? trades.trades.filter((t) => t.reason.startsWith("salary dump")).map((t) => t.reason).join("; ")
+    : "";
+  const otherTrades = trades && trades.trades.length
+    ? trades.trades.filter((t) => !t.reason.startsWith("salary dump")).slice(0, 3)
+      .map((t) => `${t.teamA} ↔ ${t.teamB}: ${t.playerA} for ${t.playerB} (${t.reason})`).join("; ")
+    : "no major trades";
 
   return `You are the writer of Hot Stove, the offseason rumor and transaction column covering the Vermont Professional Lacrosse League (VPLL) — a fictional 32-team professional lacrosse league in small-town Vermont with rabid EPL-style fanbases and a soft salary cap that resort-town teams love to violate.
 
@@ -98,11 +110,13 @@ YEAR ${yearNum} OFFSEASON FACTS:
 - Coaching carousel: ${firings}
 - Retirements: ${retirements}
 - Risers/fallers heading into next year: ${movers}
+- Free agency's biggest moves: ${topSignings}
+- Trade activity: ${otherTrades}${salaryDumps ? `\n- Cap-driven salary dumps (teams shedding contracts purely to duck the luxury tax — a distinct storyline from a needs-based or star-demanded trade): ${salaryDumps}` : ""}
 
 RULES:
 - This is a fictional league. Never reference real-world years, leagues, teams, or people. The league calendar is simply "Year ${yearNum}".
 - You may invent brief quotes from "league sources" or the named coaches.
-- 250-400 words. Cover the draft's biggest storyline, the most interesting coaching change, and one bold prediction.
+- 250-400 words. Cover the draft's biggest storyline, the most interesting coaching or free agency/trade move, and one bold prediction. A Franchise-tier free agent signing or a cap-driven salary dump, if either happened, is exactly the kind of thing this column should lead with.
 - Respond ONLY with valid JSON in exactly this shape, no markdown fences, no preamble: {"headline": "...", "body": "..."}`;
 }
 
