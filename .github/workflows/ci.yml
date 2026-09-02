@@ -1,0 +1,36 @@
+name: CI
+
+# No dedicated main branch exists yet (see CLAUDE.md) — everything currently lives on one
+# working branch — so this runs on every push and every PR rather than a hardcoded branch name.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Node's built-in test runner — data-integrity, multi-year-parity, playoff-tiebreakers,
+      # draft-lottery, roster-caps, player-pool, free-agency-tiers (see CLAUDE.md's Testing
+      # workflow section for what each covers).
+      - run: npm test
+
+      # Real build-validity check — surfaces duplicate-export/missing-import errors immediately
+      # rather than needing a manual grep.
+      - run: npm run build
+
+      # Headless 16-year league simulation. Exits non-zero on a genuine roster-integrity
+      # violation (duplicate players, invalid ratings, roster size out of bounds, etc.) — a real
+      # regression, not noise. The printed rating-SD/coach-firing/champion-diversity numbers are
+      # informational only (no seeded PRNG in this codebase, so they're expected to vary run to
+      # run within the documented benchmark ranges) and never fail the job on their own.
+      - run: npm run simulate:years -- 16
