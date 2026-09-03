@@ -74,7 +74,24 @@ RULES:
 - Respond ONLY with valid JSON in exactly this shape, no markdown fences, no preamble: {"headline": "...", "body": "..."}`;
 }
 
-export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, cupChampion, draft, coaching, retirement, progression, freeAgency, trades }) {
+function summarizeAward(label, a) {
+  return a ? `${label}: ${a.name} (${POS_NAME[a.pos]}, ${a.team})` : null;
+}
+
+function summarizeSeasonAwards(seasonLabel, awards) {
+  if (!awards) return null;
+  const lines = [
+    summarizeAward("MVP", awards.mvp),
+    summarizeAward("Offensive Player of the Year", awards.opoy),
+    summarizeAward("Defensive Player of the Year", awards.dpoy),
+    summarizeAward("Rookie of the Year", awards.roy),
+    summarizeAward("Trophy Final MVP", awards.finalsMVP),
+    awards.coy ? `Coach of the Year: ${awards.coy.coach} (${awards.coy.team})` : null,
+  ].filter(Boolean);
+  return lines.length ? `${seasonLabel} awards — ${lines.join("; ")}` : null;
+}
+
+export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, cupChampion, draft, coaching, retirement, progression, freeAgency, trades, awards }) {
   const topPicks = draft ? draft.results.slice(0, 5).map((p) => `Pick ${p.overallPick}: ${p.team} selects ${p.prospect.name} (${POS_NAME[p.prospect.pos]}, age ${p.prospect.age}, ceiling ${p.prospect.ceiling})`).join("; ") : "draft pending";
   const firings = coaching && coaching.fired.length
     ? coaching.fired.map((f, i) => `${f.team} fired ${f.oldCoach} (${f.oldArch}), hired ${coaching.hired[i]?.newCoach} (${coaching.hired[i]?.newArch})`).join("; ")
@@ -97,6 +114,11 @@ export function buildHotStovePrompt({ yearNum, corkumChampion, culkinChampion, c
     ? trades.trades.filter((t) => !t.reason.startsWith("salary dump")).slice(0, 3)
       .map((t) => `${t.teamA} ↔ ${t.teamB}: ${t.playerA} for ${t.playerB} (${t.reason})`).join("; ")
     : "no major trades";
+  const awardLines = [
+    summarizeSeasonAwards("Corkum", awards?.corkum),
+    summarizeSeasonAwards("Culkin", awards?.culkin),
+    awards?.davidson ? `The Davidson Award (Commissioners Cup MVP): ${awards.davidson.name} (${POS_NAME[awards.davidson.pos]}, ${awards.davidson.team})` : null,
+  ].filter(Boolean);
 
   return `You are the writer of Hot Stove, the offseason rumor and transaction column covering the Vermont Professional Lacrosse League (VPLL) — a fictional 32-team professional lacrosse league in small-town Vermont with rabid EPL-style fanbases and a soft salary cap that resort-town teams love to violate.
 
@@ -112,11 +134,12 @@ YEAR ${yearNum} OFFSEASON FACTS:
 - Risers/fallers heading into next year: ${movers}
 - Free agency's biggest moves: ${topSignings}
 - Trade activity: ${otherTrades}${salaryDumps ? `\n- Cap-driven salary dumps (teams shedding contracts purely to duck the luxury tax — a distinct storyline from a needs-based or star-demanded trade): ${salaryDumps}` : ""}
+${awardLines.length ? `- Awards ceremony: ${awardLines.join(" | ")}` : ""}
 
 RULES:
 - This is a fictional league. Never reference real-world years, leagues, teams, or people. The league calendar is simply "Year ${yearNum}".
 - You may invent brief quotes from "league sources" or the named coaches.
-- 250-400 words. Cover the draft's biggest storyline, the most interesting coaching or free agency/trade move, and one bold prediction. A Franchise-tier free agent signing or a cap-driven salary dump, if either happened, is exactly the kind of thing this column should lead with.
+- 250-400 words. Cover the draft's biggest storyline, the most interesting coaching or free agency/trade move, and one bold prediction. A Franchise-tier free agent signing, a cap-driven salary dump, or a notable award winner (especially the Davidson Award or an MVP on a rebuilding squad) is exactly the kind of thing this column should lead with.
 - Respond ONLY with valid JSON in exactly this shape, no markdown fences, no preamble: {"headline": "...", "body": "..."}`;
 }
 

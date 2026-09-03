@@ -68,7 +68,20 @@ Current module layout:
   the harness — now both just call `runFreeAgency()`. The spec's homegrown-bonus idea is **not**
   implemented: it depends on a hometown-matches-team signal that doesn't exist anywhere in the
   engine despite Master File 9.3 describing the system — no player tuple field, no assignment
-  code. Building that is a separate subsystem, flagged rather than faked)
+  code. Building that is a separate subsystem, flagged rather than faked), `awards` (Master File
+  Section 10 — MVP, Offensive/Defensive Player of the Year, Most Outstanding Goalie, Rookie of
+  the Year, Coach of the Year, both Trophy Finals MVPs, the Davidson Award (Commissioners Cup
+  MVP), and First/Second Team All-VPLL + All-Rookie Team. Built entirely from signals the engine
+  already tracks — overall/star/leadership/balance, team subcategory ratings, roster tag, coach
+  archetype, actual standings/playoff results — never from season-long individual stats
+  (goals/assists), which don't exist anywhere in this engine and are a separately-deferred
+  system (see "Known scope boundaries" below); every award is a genuine proxy for what the doc
+  describes, not a fabricated stand-in for a missing signal. Comeback Player of the Year is
+  **not** implemented for the same reason as the homegrown bonus above — it needs multi-year
+  per-player injury/struggle history that doesn't exist on the player tuple or anywhere else.
+  Rookie identity is tracked explicitly (`currentRookies` state in `App.jsx`, snapshotted from
+  the draft class right before `beginYear2` resets `offseason`) rather than inferred from
+  contract-year arithmetic, which would have been fragile and implicit)
 - `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
@@ -81,7 +94,8 @@ Current module layout:
 - `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
   simulation harness and CLI report (see "Testing workflow" below)
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
-  `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`
+  `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`,
+  `awards.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -175,8 +189,12 @@ real automated suite instead of the fully-manual process this section used to de
   `pickMotivation()`'s tier-based distribution over a large sample, `projectedCapFine()` against
   a controlled payroll, `reSignChance()`'s coach-fit bump/penalty and its cap-pressure dampening
   — reduced but never fully blocked — and `runTradeEngine()`'s salary-dump phase actually moving
-  the highest-AAV player off a team paying a luxury fine). All run in well under a second
-  combined.
+  the highest-AAV player off a team paying a luxury fine), and `awards.test.js` (every award's
+  selection logic against a fully controlled league roster so a real embedded player can never
+  accidentally win a test by coincidence — position filters for OPOY/DPOY/MOG, the MVP context
+  bonus actually favoring a weaker team, Coach of the Year's overachievement math, the Davidson
+  Award's balance-eligibility filter and its full-roster fallback, and All-VPLL/All-Rookie Team
+  composition and no player appearing on both teams). All run in well under a second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
@@ -265,7 +283,13 @@ Deliberately not the generic AI-assistant look — grounded in Vermont + the spo
 ## Known scope boundaries (deliberately deferred, not forgotten)
 
 - **Season-long stat tracking** (goals/assists leaderboards across a full season) — explicitly
-  deferred by the user, needs its own design conversation before building
+  deferred by the user, needs its own design conversation before building. `src/engine/awards.js`
+  (Master File Section 10) is built entirely around this gap rather than blocked by it — every
+  award uses ratings/standings/roster signals instead, and Comeback Player of the Year is
+  skipped outright since it specifically needs data this system doesn't have
+- **Hometown system** (Master File 9.3) — not implemented anywhere: no player tuple field, no
+  assignment code. The free agency tiers spec's homegrown-bonus idea depends on it and was
+  skipped for the same reason
 - **Culkin (indoor) roster carryover** is abstracted, not literal — Culkin uses the same
   ratings/rosters as Corkum with the Balance modifier doing the work, rather than a true
   80%-carryover roster mutation between seasons

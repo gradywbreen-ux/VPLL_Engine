@@ -25,6 +25,7 @@ import {
 import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
 import { evaluateRetirement } from "./engine/retirement.js";
 import { runFreeAgency, FREE_AGENT_TIER_NAMES } from "./engine/freeAgency.js";
+import { computeSeasonAwards, computeDavidsonAward } from "./engine/awards.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
 import { fetchArticle } from "./pressbox/api.js";
 import { STYLES } from "./styles/styles.js";
@@ -87,6 +88,7 @@ export default function VPLLSimulator() {
           const parsed = JSON.parse(meta.value);
           if (parsed.yearNumber) setYearNumber(parsed.yearNumber);
           if (parsed.yearHistory) setYearHistory(parsed.yearHistory);
+          if (parsed.currentRookies) setCurrentRookies(parsed.currentRookies);
         }
       } catch (e) { /* first time playing — Year 1, no history yet */ }
 
@@ -368,6 +370,11 @@ export default function VPLLSimulator() {
   const [yearNumber, setYearNumber] = useState(1);
   const [offseason, setOffseason] = useState({ draft: null, coaching: null, retirement: null, progression: null, freeAgency: null, trades: null });
   const [yearHistory, setYearHistory] = useState([]); // archived summaries of completed years
+  // Names of players drafted last offseason, now playing their true rookie season — set once
+  // by beginYear2 (before offseason.draft gets reset to null) so awards.js's Rookie of the
+  // Year / All-Rookie Team have a real, explicit signal instead of inferring "rookie" from
+  // contract-year arithmetic.
+  const [currentRookies, setCurrentRookies] = useState([]);
   const [dataVersion, setDataVersion] = useState(0); // bump to force re-render after mutating TEAMS/COACHES/PLAYERS_RAW
   const [offseasonBusy, setOffseasonBusy] = useState(false);
 
@@ -382,9 +389,9 @@ export default function VPLLSimulator() {
     return set;
   }
 
-  async function persistOffseasonExtras(newYearNumber, newYearHistory) {
+  async function persistOffseasonExtras(newYearNumber, newYearHistory, newCurrentRookies) {
     try {
-      await storage.set("vpll-meta-state", JSON.stringify({ yearNumber: newYearNumber, yearHistory: newYearHistory }));
+      await storage.set("vpll-meta-state", JSON.stringify({ yearNumber: newYearNumber, yearHistory: newYearHistory, currentRookies: newCurrentRookies }));
     } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }
 
@@ -571,11 +578,15 @@ export default function VPLLSimulator() {
     };
     const newHistory = [...yearHistory, summary];
     const newYearNumber = yearNumber + 1;
+    // This year's draft class becomes next year's true rookies — snapshot it before
+    // offseason.draft gets reset to null below.
+    const newRookies = (offseason.draft?.results || []).map((r) => r.prospect.name);
     setYearHistory(newHistory);
     setYearNumber(newYearNumber);
+    setCurrentRookies(newRookies);
     setOffseason({ draft: null, coaching: null, retirement: null, progression: null, freeAgency: null, trades: null });
     await persistSeasons({ corkum: null, culkin: null });
-    await persistOffseasonExtras(newYearNumber, newHistory);
+    await persistOffseasonExtras(newYearNumber, newHistory, newRookies);
   }, [yearNumber, yearHistory, seasons, combinedCupStandings, offseason, persistSeasons]);
 
   /* ---------- Reset League to Year 1 ---------- */
@@ -588,6 +599,7 @@ export default function VPLLSimulator() {
     setSeasons({ corkum: null, culkin: null });
     setYearNumber(1);
     setYearHistory([]);
+    setCurrentRookies([]);
     setOffseason({ draft: null, coaching: null, retirement: null, progression: null, freeAgency: null, trades: null });
     setGameHistory([]);
     setPressArchive([]);
@@ -757,13 +769,18 @@ export default function VPLLSimulator() {
     setPressError(null);
     try {
       const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0]?.team;
+      const awards = {
+        corkum: seasons.corkum?.playoffs ? computeSeasonAwards(standingsFor.corkum, seasons.corkum.playoffs, currentRookies) : null,
+        culkin: seasons.culkin?.playoffs ? computeSeasonAwards(standingsFor.culkin, seasons.culkin.playoffs, currentRookies) : null,
+        davidson: computeDavidsonAward(cupChampion),
+      };
       const prompt = buildHotStovePrompt({
         yearNum: yearNumber,
         corkumChampion: seasons.corkum?.playoffs?.champion || "TBD",
         culkinChampion: seasons.culkin?.playoffs?.champion || "TBD",
         cupChampion: cupChampion || "TBD",
         draft: offseason.draft, coaching: offseason.coaching, retirement: offseason.retirement, progression: offseason.progression,
-        freeAgency: offseason.freeAgency, trades: offseason.trades,
+        freeAgency: offseason.freeAgency, trades: offseason.trades, awards,
       });
       const article = await fetchArticle(prompt);
       await saveToArchive({ ...article, outlet: "Hot Stove", gameLabel: `Year ${yearNumber} Offseason`, timestamp: Date.now() });
@@ -771,7 +788,7 @@ export default function VPLLSimulator() {
       setPressError("The presses jammed — the column couldn't be generated. Try again.");
     }
     setPressGenerating(false);
-  }, [yearNumber, seasons, offseason, combinedCupStandings, saveToArchive]);
+  }, [yearNumber, seasons, offseason, combinedCupStandings, standingsFor, currentRookies, saveToArchive]);
 
   const generateExhibitionRecap = useCallback(async () => {
     if (!lastResult) return;
@@ -1046,6 +1063,49 @@ export default function VPLLSimulator() {
                     ))}
                   </div>
                 )}
+                {seasons[activeSeasonType].playoffs.champion && (() => {
+                  const awards = computeSeasonAwards(standingsFor[activeSeasonType], seasons[activeSeasonType].playoffs, currentRookies);
+                  const AWARD_ROWS = [
+                    ["Most Valuable Player", awards.mvp],
+                    ["Offensive Player of the Year", awards.opoy],
+                    ["Defensive Player of the Year", awards.dpoy],
+                    ["Most Outstanding Goalie", awards.mog],
+                    ["Rookie of the Year", awards.roy],
+                    [`${TROPHY_LABEL[activeSeasonType]} Final MVP`, awards.finalsMVP],
+                  ];
+                  return (
+                    <div className="vpll-week-block">
+                      <div className="vpll-week-label">{SEASON_LABEL[activeSeasonType]} Season Awards</div>
+                      {AWARD_ROWS.map(([label, a], i) => (
+                        <div className="vpll-game-row" key={i}>
+                          <span className="matchup">{label}</span>
+                          <span className="played vpll-team-name-row">
+                            {a ? <>{a.name} ({POS_NAME[a.pos]}) — <TeamLogo teamName={a.team} size={16} /> {a.team}</> : "—"}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="vpll-game-row">
+                        <span className="matchup">Coach of the Year</span>
+                        <span className="played vpll-team-name-row">
+                          {awards.coy ? <>{awards.coy.coach} ({awards.coy.arch}) — <TeamLogo teamName={awards.coy.team} size={16} /> {awards.coy.team}</> : "—"}
+                        </span>
+                      </div>
+                      {[["First Team All-VPLL", awards.allVPLL.firstTeam], ["Second Team All-VPLL", awards.allVPLL.secondTeam], ["All-Rookie Team", awards.allRookie]].map(([label, lineup]) => (
+                        lineup.length > 0 && (
+                          <div key={label}>
+                            <div className="vpll-progress-label" style={{ margin: "8px 0 4px" }}>{label}</div>
+                            {lineup.map((a, i) => (
+                              <div className="vpll-game-row" key={i}>
+                                <span className="matchup vpll-team-name-row">{a.name} ({POS_NAME[a.pos]}) — <TeamLogo teamName={a.team} size={16} /> {a.team}</span>
+                                <span className="played">OVR {a.ovr}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </section>
@@ -1191,6 +1251,15 @@ export default function VPLLSimulator() {
                   <span className="vpll-champion-name vpll-team-name-row" style={{ fontSize: 20, justifyContent: "center" }}>
                     Corkum: <TeamLogo teamName={seasons.corkum.playoffs.champion} size={24} /> {seasons.corkum.playoffs.champion} · Culkin: <TeamLogo teamName={seasons.culkin.playoffs.champion} size={24} /> {seasons.culkin.playoffs.champion}
                   </span>
+                  {(() => {
+                    const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0]?.team;
+                    const davidson = computeDavidsonAward(cupChampion);
+                    return davidson && (
+                      <div className="vpll-team-name-row" style={{ marginTop: 8, fontSize: 13, justifyContent: "center", color: "var(--ink-soft)" }}>
+                        The Davidson Award (Commissioners Cup MVP): {davidson.name} ({POS_NAME[davidson.pos]}) — <TeamLogo teamName={davidson.team} size={16} /> {davidson.team}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 1. Draft */}
