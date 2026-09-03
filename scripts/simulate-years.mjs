@@ -50,7 +50,6 @@ function championCounts(field) {
   return counts;
 }
 const cupChampCounts = championCounts("cupChampion");
-const maxCupTitlesByOneTeam = Math.max(...Object.values(cupChampCounts));
 const mostSuccessfulTeam = Object.entries(cupChampCounts).sort((a, b) => b[1] - a[1])[0];
 
 const totalViolations = years.reduce((s, y) => s + y.rosterIntegrityViolations.length, 0);

@@ -19,6 +19,11 @@ jobs:
 
       - run: npm ci
 
+      # eslint.config.js — fails the job only on real errors (e.g. genuinely empty blocks);
+      # warnings (mostly pre-existing unused catch-block error variables and a few
+      # react-hooks/exhaustive-deps notices) print in the log but don't fail the build.
+      - run: npm run lint
+
       # Node's built-in test runner — data-integrity, multi-year-parity, playoff-tiebreakers,
       # draft-lottery, roster-caps, player-pool, free-agency-tiers (see CLAUDE.md's Testing
       # workflow section for what each covers).

@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { PLAYERS_RAW, PLAYER_POOL } from "../src/data/rawData.js";
 import {
   cutRosterToSize, claimFromPool, claimOrGenerate, enforceRosterFloor, ensureFloorBeforeRemoval,
-  maintainPlayerPool, DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, MAX_POOL_PER_POSITION,
+  maintainPlayerPool, DRAFT_ROSTER_CAP, MIN_ROSTER_SIZE, MAX_POOL_PER_POSITION,
 } from "../src/engine/roster.js";
 
 const TEAM = "Saint Albans Dawnlanders";

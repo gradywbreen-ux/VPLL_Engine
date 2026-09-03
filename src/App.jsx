@@ -130,13 +130,13 @@ export default function VPLLSimulator() {
     };
     const newHistory = [historyEntry, ...gameHistory].slice(0, 50);
     setGameHistory(newHistory);
-    try { await storage.set("vpll-game-history", JSON.stringify(newHistory)); } catch (e) {}
+    try { await storage.set("vpll-game-history", JSON.stringify(newHistory)); } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }, [homeTeam, awayTeam, isIndoor, gameHistory]);
 
   /* ---------- Season (generic across Corkum / Culkin) ---------- */
   const persistSeasons = useCallback(async (newSeasons) => {
     setSeasons(newSeasons);
-    try { await storage.set("vpll-year1-state", JSON.stringify(newSeasons)); } catch (e) {}
+    try { await storage.set("vpll-year1-state", JSON.stringify(newSeasons)); } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }, []);
 
   const corkumChampion = seasons.corkum?.playoffs?.champion || null;
@@ -385,13 +385,13 @@ export default function VPLLSimulator() {
   async function persistOffseasonExtras(newYearNumber, newYearHistory) {
     try {
       await storage.set("vpll-meta-state", JSON.stringify({ yearNumber: newYearNumber, yearHistory: newYearHistory }));
-    } catch (e) {}
+    } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }
 
   async function persistLeagueData() {
     try {
       await storage.set("vpll-league-data-state", JSON.stringify({ teams: TEAMS, coaches: COACHES, players: PLAYERS_RAW, playerPool: PLAYER_POOL }));
-    } catch (e) {}
+    } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }
 
   const runDraftStep = useCallback(async () => {
@@ -629,7 +629,7 @@ export default function VPLLSimulator() {
   const saveToArchive = useCallback(async (article) => {
     const newArchive = [article, ...pressArchive].slice(0, 30);
     setPressArchive(newArchive);
-    try { await storage.set("vpll-pressbox-archive", JSON.stringify(newArchive)); } catch (e) {}
+    try { await storage.set("vpll-pressbox-archive", JSON.stringify(newArchive)); } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }, [pressArchive]);
 
   // Build the list of recap-able games: all played season + playoff games across both seasons

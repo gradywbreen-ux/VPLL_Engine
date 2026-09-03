@@ -196,6 +196,22 @@ real automated suite instead of the fully-manual process this section used to de
   `esbuild --jsx=automatic` step, and no risk of duplicate top-level definitions across files
   now that each subsystem is its own module (a build failure or duplicate-export error surfaces
   immediately instead of needing a manual grep).
+- **`npm run lint`** — ESLint 9+ flat config (`eslint.config.js`), separate rule blocks for the
+  browser/React code under `src/` (with `globals.browser`) versus plain Node code (`scripts/`,
+  `server/`, `test/`, config files, with `globals.node`) so neither false-flags the other's
+  globals. Deliberately does *not* pull in `eslint-plugin-react-hooks`'s full v7 "recommended"
+  bundle — that config ships a large set of React Compiler-oriented rules (purity, immutability,
+  static-components, preserve-manual-memoization, ...) meant for codebases adopting that
+  compiler, which this project doesn't use; only `rules-of-hooks` (error) and `exhaustive-deps`
+  (warn) are enabled, the two classic rules that catch real hook bugs. Fails only on genuine
+  errors — pre-existing style patterns (mainly unused `catch (e)` error variables and a few
+  `exhaustive-deps` notices) are warnings and don't block the build. Wired into CI right after
+  `npm ci`.
+- **`.github/workflows/ci.yml`** — runs on every push and PR (no dedicated main branch exists
+  yet, so it isn't scoped to one branch name): `npm ci` → `npm run lint` → `npm test` →
+  `npm run build` → a 16-year `npm run simulate:years` benchmark. The benchmark step already
+  exits non-zero on a genuine roster-integrity violation; its rating-SD/coach-firing/champion-
+  diversity numbers are informational only, since there's no seeded PRNG here.
 
 Validated 16-year benchmark from the module split (see git history for the full run): rating SD
 5.4-8.9 (close to the earlier hand-tuned 6.9-10.0 pass), ~5.5% coach firing rate per

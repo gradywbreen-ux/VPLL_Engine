@@ -17,7 +17,7 @@
 import { TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, PLAYER_POOL } from "../../src/data/rawData.js";
 import { resetLeagueDataToYear1 } from "../../src/data/reset.js";
 import { rand } from "../../src/engine/mathHelpers.js";
-import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll } from "../../src/engine/contracts.js";
+import { CONTRACT_TYPES, assignNewContract } from "../../src/engine/contracts.js";
 import { simulateGame } from "../../src/engine/simulation.js";
 import { generateFullSchedule } from "../../src/engine/schedule.js";
 import { runTradeEngine } from "../../src/engine/trades.js";

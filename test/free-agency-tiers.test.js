@@ -81,8 +81,7 @@ test("projectedCapFine matches capFine() computed against the projected payroll"
 });
 
 test("reSignChance never fully blocks a re-sign even under severe cap pressure, but meaningfully reduces the odds", () => {
-  const roomy = [makePlayer("P1", "M", 70, { aav: 100_000 })]; // tiny payroll, huge room
-  const tight = [makePlayer("P1", "M", 70, { aav: 100_000 })]; // same team, but we simulate a huge incoming AAV instead
+  const roomy = [makePlayer("P1", "M", 70, { aav: 100_000 })]; // tiny payroll, huge room — cap pressure comes from the projected AAV argument below, not the roster
   const standings = { [TEAM]: { points: 10 } };
 
   withFreshRoster(roomy, () => {

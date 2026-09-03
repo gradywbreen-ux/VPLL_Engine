@@ -1,4 +1,4 @@
-import { TEAMS, TEAM_NAMES } from "../data/rawData.js";
+import { TEAMS } from "../data/rawData.js";
 import { BY_REGION } from "./schedule.js";
 import { simulateGame } from "./simulation.js";
 import { clamp } from "./mathHelpers.js";
