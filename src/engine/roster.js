@@ -4,6 +4,7 @@ import { rand } from "./mathHelpers.js";
 import { getUniqueName } from "./draft.js";
 import { evaluateRetirement } from "./retirement.js";
 import { assignHometown } from "./hometown.js";
+import { mintPlayerId } from "./playerId.js";
 
 /* ============================================================
    ROSTER SIZE RULES (Master File 9.7 Training Camp, tuned to the
@@ -76,6 +77,7 @@ function generateJourneyman(pos, usedNames) {
   const tuple = [getUniqueName(usedNames), pos, hand, age, overall, 0, leadership, balance, durability];
   assignNewContract(tuple, CONTRACT_TYPES.JOURNEYMAN);
   tuple[13] = assignHometown();
+  tuple[14] = mintPlayerId();
   return tuple;
 }
 

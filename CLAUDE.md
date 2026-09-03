@@ -97,19 +97,49 @@ Current module layout:
   the Year, Coach of the Year, both Trophy Finals MVPs, the Davidson Award (Commissioners Cup
   MVP), and First/Second Team All-VPLL + All-Rookie Team. Built entirely from signals the engine
   already tracks — overall/star/leadership/balance, team subcategory ratings, roster tag, coach
-  archetype, actual standings/playoff results — never from season-long individual stats
-  (goals/assists), which don't exist anywhere in this engine and are a separately-deferred
-  system (see "Known scope boundaries" below); every award is a genuine proxy for what the doc
-  describes, not a fabricated stand-in for a missing signal. Comeback Player of the Year is
-  **still not** implemented — unlike the homegrown bonus, it needs multi-year per-player
-  injury/struggle history that doesn't exist on the player tuple or anywhere else, and
-  `deactivation.js` doesn't fill that gap. Rookie identity is tracked explicitly (`currentRookies`
+  archetype, actual standings/playoff results — not from season-long individual stats
+  (goals/assists), which didn't exist anywhere in this engine when this module was built (see
+  `playerStats` below, which now provides them — `awards.js` predates it and hasn't been
+  revisited to use it); every award is a genuine proxy for what the doc describes, not a
+  fabricated stand-in for a missing signal. Comeback Player of the Year is
+  **still not** implemented — it needs multi-year per-player history, which didn't exist
+  anywhere on the player tuple or elsewhere when this module was built, and `deactivation.js`
+  doesn't fill that gap either. `playerStats.js`'s `CAREER_STATS` (below) now gives a real,
+  multi-year, per-player production history (not literally injury/struggle data, but a genuine
+  signal a "bounced back after a down year" award could be built on) — worth revisiting when
+  task #44 is picked up, rather than still treating this as a hard data gap. Rookie identity is
+  tracked explicitly (`currentRookies`
   state in `App.jsx`, snapshotted from the draft class right before `beginYear2` resets
   `offseason`) rather than inferred from contract-year arithmetic, which would have been fragile
   and implicit. Every player-scoped award takes an optional `deactivated` param (`{ team: [names] }`
   for the season being evaluated, from `deactivation.js` above) and excludes anyone on it — the
   Davidson Award (evaluated across both seasons combined) and Coach of the Year (team-level, not
-  a player award) don't take one)
+  a player award) don't take one), `boxScore` (goal attribution, extended for season-long
+  individual stat tracking: `attributeFaceoffs()`, `attributeCausedTurnovers()`, and
+  `attributeGoalieStats()` alongside the original `attributeGoals()`, all four narrating a
+  plausible individual attribution of a real team-level simulated outcome from the same rating
+  signals `simulation.js` itself uses — not a literal play-by-play, since this engine has no
+  per-possession simulation, same as everything else here. `computeGameBoxScore()` is the one
+  call site that runs all four for a single game, feeding both display and `playerStats`
+  accumulation below), `playerStats` (season + career individual leaderboards — goals, assists,
+  points, 2-point goals, face-off %, caused turnovers, save % — built from `boxScore.js`'s
+  eager, guaranteed-complete-for-every-game attribution rather than the old on-click-only
+  generation. `accumulateGameStats()` folds one game's box score into both a season-scoped store
+  (`season.playerStats`, wiped every year) and `CAREER_STATS` (`src/data/rawData.js`, persistent
+  across years, keyed by the stable player ID at tuple index 14 — see `playerId.js` below and
+  "Player data format" above — specifically because names alone aren't safe to key
+  cross-year data by). Deliberately doesn't track "games played" — this engine has no literal
+  per-game lineup, so there's no honest number to put there. Scoped to regular-season games
+  only; playoff box scores still render for display but don't feed either store, so a season
+  leaderboard never conflates a 13-game regular season with a handful of playoff games.
+  `subtractSeasonFromCareer()` undoes a scrapped-and-reset season's contribution to
+  `CAREER_STATS` (`App.jsx`'s `resetSeason`) so a redone season can't double-count.
+  `topByStat()` is the one leaderboard query both the Stats tab and any future consumer use,
+  with a minimum-attempts floor before a rate stat like face-off %/save % is eligible to lead),
+  `playerId` (mints the stable per-player identity above — no persisted counter, a
+  timestamp-plus-random string is entropy enough given this engine already has no seeded PRNG
+  anywhere else; `bootstrapPlayerIdsIfNeeded()` migrates existing saves the same way every other
+  post-hoc tuple field here does)
 - `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
@@ -123,7 +153,8 @@ Current module layout:
   simulation harness and CLI report (see "Testing workflow" below)
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
   `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`,
-  `awards.test.js`, `hometown.test.js`, `deactivation.test.js`
+  `awards.test.js`, `hometown.test.js`, `deactivation.test.js`, `boxScore.test.js`,
+  `playerId.test.js`, `playerStats.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -149,12 +180,17 @@ mounts. Don't lose this pattern in a refactor — it's what "Reset to Year 1" re
 Players are compact tuples, not objects (to keep embedded payload size down):
 ```
 [name, pos, hand, age, overall, starFlag, leadership, balance, durability,
- aav, yearsRemaining, contractType, ceiling, hometown]
+ aav, yearsRemaining, contractType, ceiling, hometown, id]
 ```
 Indices 9-12 (contract + dev ceiling fields) were added after the original embed — always
 guard for `undefined` on old saves (`bootstrapContractsIfNeeded()` handles this). Index 13
 (`hometown`, a team name — see `src/engine/hometown.js` above) was added the same way, guarded
-by `bootstrapHometownsIfNeeded()`. `ceiling`
+by `bootstrapHometownsIfNeeded()`. Index 14 (`id`, a stable player identity — see
+`src/engine/playerId.js` above) followed the same pattern again, guarded by
+`bootstrapPlayerIdsIfNeeded()` — it exists because a player's *name* is only unique at a single
+point in time (a retiree's name can be reissued to a new draftee years later), which is fine for
+anything that only looks at the current league but unsafe for anything that persists
+player-scoped data across years, like `src/engine/playerStats.js`'s `CAREER_STATS` below. `ceiling`
 (index 12) is only set for draft picks; established players have no growth target, which is
 intentional — only young/drafted talent develops.
 
@@ -230,10 +266,22 @@ real automated suite instead of the fully-manual process this section used to de
   (`MARKET_TIER` covers all 32 real teams exactly once, `assignHometown()` always returns a real
   team and weights Tier 1 above Tier 3 over a large sample, `bootstrapHometownsIfNeeded()`
   backfills missing hometowns on rostered/pooled players without ever overwriting an existing
-  one), and `deactivation.test.js` (misfit selection sits the right specialists for the right
+  one), `deactivation.test.js` (misfit selection sits the right specialists for the right
   season, the 5-player cap, and that a deactivation never drops an active position group below
-  `POSITION_MINIMUMS`, including with a surplus above the floor). All run in well under a second
-  combined.
+  `POSITION_MINIMUMS`, including with a surplus above the floor), `boxScore.test.js` (every
+  goal carries a resolvable scorer id, the 2-point flag lands on exactly one eligible goal,
+  face-offs distribute to a real FOGO with the stronger team winning more over a large sample
+  and never throwing when a team has none rostered, caused turnovers only ever land on
+  Defense/Long-Stick Midfield, goalie saves/shots-faced/goals-allowed stay internally
+  consistent and `null` with no rostered goalie, and `computeGameBoxScore()`'s combined shape),
+  `playerId.test.js` (`mintPlayerId()` uniqueness over a large sample, and
+  `bootstrapPlayerIdsIfNeeded()`'s backfill-without-overwrite migration), and
+  `playerStats.test.js` (`accumulateGameStats()` sums goals/assists/face-offs/turnovers/goalie
+  lines into both the season store and `CAREER_STATS`, two different players who happen to
+  share a name accumulate separately because they're keyed by id and not name — proving the
+  exact collision `playerId.js` exists to prevent — `subtractSeasonFromCareer()` reverses only
+  what a given season actually contributed, and `topByStat()`'s position filter and rate-stat
+  minimum-attempts floor). All run in well under a second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
@@ -321,11 +369,13 @@ Deliberately not the generic AI-assistant look — grounded in Vermont + the spo
 
 ## Known scope boundaries (deliberately deferred, not forgotten)
 
-- **Season-long stat tracking** (goals/assists leaderboards across a full season) — explicitly
-  deferred by the user, needs its own design conversation before building. `src/engine/awards.js`
-  (Master File Section 10) is built entirely around this gap rather than blocked by it — every
-  award uses ratings/standings/roster signals instead, and Comeback Player of the Year is
-  skipped outright since it specifically needs data this system doesn't have
+- **Season-long individual stat tracking** is now built (`src/engine/boxScore.js` +
+  `src/engine/playerStats.js`, the Stats tab in `App.jsx`) — goals, assists, points, 2-point
+  goals, face-off %, caused turnovers, and goalie save %, both season-scoped and a persistent
+  cross-year career total. `src/engine/awards.js` (Master File Section 10) predates this and was
+  deliberately built entirely around ratings/standings/roster signals instead, since this gap
+  didn't exist yet when it shipped — it hasn't been revisited to consume the new stat data, and
+  Comeback Player of the Year specifically is still unbuilt (see the awards.js note above).
 - **Culkin (indoor) roster carryover** is abstracted, not literal — Culkin uses the same
   ratings/rosters as Corkum with the Balance modifier doing the work, rather than a true
   80%-carryover roster mutation between seasons

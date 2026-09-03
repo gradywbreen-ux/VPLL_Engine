@@ -36,10 +36,16 @@ import {
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, MAX_POOL_PER_POSITION, POSITION_MINIMUMS,
 } from "../../src/engine/roster.js";
 import { assignHometown } from "../../src/engine/hometown.js";
+import { mintPlayerId } from "../../src/engine/playerId.js";
+import { computeGameBoxScore } from "../../src/engine/boxScore.js";
+import { accumulateGameStats } from "../../src/engine/playerStats.js";
 
 /* ---------- Season + playoffs, one season type, fully to completion ---------- */
 function simulateFullSeasonResults(schedule, isIndoor) {
   const results = {};
+  const seasonStats = {}; // thrown away — this harness has no UI leaderboard, but every game
+                           // still runs box-score attribution so CAREER_STATS (and this code
+                           // path itself) get exercised the same way the app's does.
   for (let w = 1; w <= 13; w++) {
     const weekGames = schedule.filter((g) => g.week === w);
     const gamesPlayedThisWeek = {};
@@ -47,7 +53,12 @@ function simulateFullSeasonResults(schedule, isIndoor) {
       const homeFatigued = (gamesPlayedThisWeek[g.home] || 0) >= 1;
       const awayFatigued = (gamesPlayedThisWeek[g.away] || 0) >= 1;
       const res = simulateGame(g.home, g.away, isIndoor, homeFatigued, awayFatigued);
-      results[g.id] = { homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot };
+      const box = computeGameBoxScore(g.home, g.away, isIndoor, res);
+      accumulateGameStats(seasonStats, box, g.home, g.away);
+      results[g.id] = {
+        homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,
+        homeTwoPointGoal: !!res.homeTwoPointGoal, awayTwoPointGoal: !!res.awayTwoPointGoal,
+      };
       gamesPlayedThisWeek[g.home] = (gamesPlayedThisWeek[g.home] || 0) + 1;
       gamesPlayedThisWeek[g.away] = (gamesPlayedThisWeek[g.away] || 0) + 1;
     }
@@ -119,6 +130,7 @@ function runDraft(combinedCupStandings) {
       tuple[9] = Math.round((tuple[9] * roundScale) / 500) * 500;
       tuple[12] = pr.ceiling;
       tuple[13] = assignHometown();
+      tuple[14] = mintPlayerId();
       PLAYERS_RAW[team].push(tuple);
       overallPick++;
     }

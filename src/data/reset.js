@@ -6,10 +6,11 @@
    state between simulation runs in the test harness (scripts/lib/simulateLeague.mjs)
    without duplicating it.
    ============================================================ */
-import { TEAMS, COACHES, PLAYERS_RAW, TEAM_NAMES, PRISTINE_YEAR1, PLAYER_POOL } from "./rawData.js";
+import { TEAMS, COACHES, PLAYERS_RAW, TEAM_NAMES, PRISTINE_YEAR1, PLAYER_POOL, CAREER_STATS } from "./rawData.js";
 import { bootstrapContractsIfNeeded } from "../engine/contracts.js";
 import { migrateLSMIfNeeded } from "./migrations.js";
 import { bootstrapHometownsIfNeeded } from "../engine/hometown.js";
+import { bootstrapPlayerIdsIfNeeded } from "../engine/playerId.js";
 
 export function resetLeagueDataToYear1() {
   const fresh = JSON.parse(JSON.stringify(PRISTINE_YEAR1));
@@ -22,7 +23,9 @@ export function resetLeagueDataToYear1() {
     PLAYERS_RAW[t].push(...fresh.players[t]);
   }
   PLAYER_POOL.length = 0; // Year 1 always starts with an empty pool — nothing's been cut yet
+  Object.keys(CAREER_STATS).forEach((k) => delete CAREER_STATS[k]); // fresh league, no career history yet
   bootstrapContractsIfNeeded();
   migrateLSMIfNeeded();
   bootstrapHometownsIfNeeded();
+  bootstrapPlayerIdsIfNeeded();
 }

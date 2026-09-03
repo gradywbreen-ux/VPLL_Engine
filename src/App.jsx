@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 import {
-  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME, PLAYER_POOL,
+  TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME, PLAYER_POOL, CAREER_STATS,
 } from "./data/rawData.js";
 import { migrateLSMIfNeeded } from "./data/migrations.js";
 import { resetLeagueDataToYear1 } from "./data/reset.js";
 import { formatMoney, rand } from "./engine/mathHelpers.js";
 import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll, capFine, bootstrapContractsIfNeeded } from "./engine/contracts.js";
 import { simulateGame } from "./engine/simulation.js";
-import { attributeGoals } from "./engine/boxScore.js";
+import { attributeGoals, computeGameBoxScore } from "./engine/boxScore.js";
+import { accumulateGameStats, subtractSeasonFromCareer, topByStat } from "./engine/playerStats.js";
 import { BY_DIVISION, generateFullSchedule } from "./engine/schedule.js";
 import { executeTrade, runTradeEngine } from "./engine/trades.js";
 import { computeStandings } from "./engine/standings.js";
@@ -27,6 +28,7 @@ import { evaluateRetirement } from "./engine/retirement.js";
 import { runFreeAgency, FREE_AGENT_TIER_NAMES } from "./engine/freeAgency.js";
 import { computeSeasonAwards, computeDavidsonAward } from "./engine/awards.js";
 import { assignHometown, bootstrapHometownsIfNeeded } from "./engine/hometown.js";
+import { mintPlayerId, bootstrapPlayerIdsIfNeeded } from "./engine/playerId.js";
 import { computeAllDeactivations } from "./engine/deactivation.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
 import { fetchArticle } from "./pressbox/api.js";
@@ -59,6 +61,9 @@ export default function VPLLSimulator() {
   const [loaded, setLoaded] = useState(false);
   const [standingsView, setStandingsView] = useState("combined"); // 'combined' | 'cup' | 'culkin' | 'division'
   const [divisionSeason, setDivisionSeason] = useState("corkum"); // which season the By Division view shows
+  const [statsSeasonType, setStatsSeasonType] = useState("corkum"); // which season's leaderboard the Stats tab shows
+  const [statsScope, setStatsScope] = useState("season"); // 'season' | 'career'
+  const [statsCategory, setStatsCategory] = useState("pts");
 
   /* ---------- Load persisted state ---------- */
   useEffect(() => {
@@ -78,12 +83,14 @@ export default function VPLLSimulator() {
           if (saved.coaches) Object.assign(COACHES, saved.coaches);
           if (saved.players) Object.assign(PLAYERS_RAW, saved.players);
           if (saved.playerPool) { PLAYER_POOL.length = 0; PLAYER_POOL.push(...saved.playerPool); }
+          if (saved.careerStats) Object.assign(CAREER_STATS, saved.careerStats);
         }
       } catch (e) { /* no league data mutations yet — using embedded Year 1 defaults */ }
 
       bootstrapContractsIfNeeded(); // no-op for anyone whose save already has contracts assigned
       migrateLSMIfNeeded(); // no-op for anyone whose save already has the position
       bootstrapHometownsIfNeeded(); // no-op for anyone whose save already has hometowns assigned
+      bootstrapPlayerIdsIfNeeded(); // no-op for anyone whose save already has stable player ids
 
       try {
         const meta = await storage.get("vpll-meta-state");
@@ -152,7 +159,7 @@ export default function VPLLSimulator() {
     const schedule = generateFullSchedule();
     // Deactivation Lists (Master File 9.8) — decided once, right as the season opens.
     const deactivated = computeAllDeactivations(seasonType === "culkin");
-    const newSeasonObj = { schedule, results: {}, playoffs: null, deactivated };
+    const newSeasonObj = { schedule, results: {}, playoffs: null, deactivated, playerStats: {} };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
   }, [seasons, persistSeasons, culkinUnlocked]);
 
@@ -172,16 +179,27 @@ export default function VPLLSimulator() {
     const weekGames = season.schedule.filter((g) => g.week === weekNum);
     const gamesPlayedThisWeek = {};
     const newResults = { ...season.results };
+    const newPlayerStats = { ...(season.playerStats || {}) };
     for (const g of weekGames) {
       const homeFatigued = (gamesPlayedThisWeek[g.home] || 0) >= 1;
       const awayFatigued = (gamesPlayedThisWeek[g.away] || 0) >= 1;
       const res = simulateGame(g.home, g.away, isIndoorSeason, homeFatigued, awayFatigued);
-      newResults[g.id] = { homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot };
+      // Box score attribution happens right here, once, for every game — not lazily on
+      // click — so the season's individual leaderboard is guaranteed complete (see
+      // src/engine/playerStats.js) and folds straight into CAREER_STATS too.
+      const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res);
+      accumulateGameStats(newPlayerStats, box, g.home, g.away);
+      newResults[g.id] = {
+        homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,
+        homeTwoPointGoal: !!res.homeTwoPointGoal, awayTwoPointGoal: !!res.awayTwoPointGoal,
+        homeGoals: box.home.goals, awayGoals: box.away.goals,
+      };
       gamesPlayedThisWeek[g.home] = (gamesPlayedThisWeek[g.home] || 0) + 1;
       gamesPlayedThisWeek[g.away] = (gamesPlayedThisWeek[g.away] || 0) + 1;
     }
-    const newSeasonObj = { ...season, results: newResults };
+    const newSeasonObj = { ...season, results: newResults, playerStats: newPlayerStats };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
+    await persistLeagueData(); // CAREER_STATS was just mutated above
     setSeasonBusy(false);
   }, [seasons, persistSeasons]);
 
@@ -191,6 +209,7 @@ export default function VPLLSimulator() {
     setSeasonBusy(true);
     const isIndoorSeason = seasonType === "culkin";
     let workingResults = { ...season.results };
+    const workingPlayerStats = { ...(season.playerStats || {}) };
     for (let w = 1; w <= 13; w++) {
       const weekGames = season.schedule.filter((g) => g.week === w && !workingResults[g.id]);
       if (!weekGames.length) continue;
@@ -199,20 +218,34 @@ export default function VPLLSimulator() {
         const homeFatigued = (gamesPlayedThisWeek[g.home] || 0) >= 1;
         const awayFatigued = (gamesPlayedThisWeek[g.away] || 0) >= 1;
         const res = simulateGame(g.home, g.away, isIndoorSeason, homeFatigued, awayFatigued);
-        workingResults[g.id] = { homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot };
+        const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res);
+        accumulateGameStats(workingPlayerStats, box, g.home, g.away);
+        workingResults[g.id] = {
+          homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,
+          homeTwoPointGoal: !!res.homeTwoPointGoal, awayTwoPointGoal: !!res.awayTwoPointGoal,
+          homeGoals: box.home.goals, awayGoals: box.away.goals,
+        };
         gamesPlayedThisWeek[g.home] = (gamesPlayedThisWeek[g.home] || 0) + 1;
         gamesPlayedThisWeek[g.away] = (gamesPlayedThisWeek[g.away] || 0) + 1;
       }
     }
-    const newSeasonObj = { ...season, results: workingResults };
+    const newSeasonObj = { ...season, results: workingResults, playerStats: workingPlayerStats };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
+    await persistLeagueData(); // CAREER_STATS was just mutated above
     setSeasonBusy(false);
   }, [seasons, persistSeasons]);
 
   const resetSeason = useCallback(async (seasonType) => {
+    // A scrapped season's games shouldn't linger in the career record once the season
+    // itself is gone — undo whatever it had already contributed to CAREER_STATS.
+    if (seasons[seasonType]?.playerStats) subtractSeasonFromCareer(seasons[seasonType].playerStats);
     const updates = { ...seasons, [seasonType]: null };
-    if (seasonType === "corkum") updates.culkin = null; // resetting Corkum also clears the downstream Culkin season
+    if (seasonType === "corkum") {
+      if (seasons.culkin?.playerStats) subtractSeasonFromCareer(seasons.culkin.playerStats);
+      updates.culkin = null; // resetting Corkum also clears the downstream Culkin season
+    }
     await persistSeasons(updates);
+    await persistLeagueData(); // CAREER_STATS may have just been adjusted above
   }, [seasons, persistSeasons]);
 
   const standingsFor = useMemo(() => {
@@ -333,6 +366,18 @@ export default function VPLLSimulator() {
   const TROPHY_LABEL = { corkum: "Corkum Trophy", culkin: "Culkin Trophy" };
   const SEASON_LABEL = { corkum: "Corkum (Outdoor)", culkin: "Culkin (Indoor)" };
 
+  // Stats tab leaderboard categories. positions restricts who's eligible to lead (a
+  // Face-off % or Save % leaderboard full of players who never take a face-off/start
+  // in net would be meaningless); null means every position is eligible.
+  const STAT_CATEGORIES = [
+    { key: "pts", label: "Points", positions: null, detail: (l) => `${l.g}G, ${l.a}A` },
+    { key: "g", label: "Goals", positions: null, detail: (l) => `${l.twoPt} on a 2-pointer` },
+    { key: "a", label: "Assists", positions: null, detail: () => null },
+    { key: "foPct", label: "Face-off %", positions: ["F"], detail: (l) => `${l.foWon}/${l.foTotal}` },
+    { key: "ct", label: "Caused Turnovers", positions: ["D", "L"], detail: () => null },
+    { key: "savePct", label: "Save %", positions: ["G"], detail: (l) => `${l.sv}/${l.sa}, ${l.ga} GA` },
+  ];
+
   // Single-season standings with that season's own playoff bonus folded in (points + 2/playoff win)
   function seasonCupStandings(seasonType) {
     const table = standingsFor[seasonType];
@@ -402,7 +447,7 @@ export default function VPLLSimulator() {
 
   async function persistLeagueData() {
     try {
-      await storage.set("vpll-league-data-state", JSON.stringify({ teams: TEAMS, coaches: COACHES, players: PLAYERS_RAW, playerPool: PLAYER_POOL }));
+      await storage.set("vpll-league-data-state", JSON.stringify({ teams: TEAMS, coaches: COACHES, players: PLAYERS_RAW, playerPool: PLAYER_POOL, careerStats: CAREER_STATS }));
     } catch (e) { /* best-effort persistence — in-memory state above already updated regardless */ }
   }
 
@@ -432,6 +477,7 @@ export default function VPLLSimulator() {
         tuple[9] = Math.round((tuple[9] * roundScale) / 500) * 500;
         tuple[12] = pr.ceiling; // development target — this is what lets a pick actually pan out (or not)
         tuple[13] = assignHometown();
+        tuple[14] = mintPlayerId();
         PLAYERS_RAW[team].push(tuple);
         overallPick++;
       }
@@ -843,6 +889,7 @@ export default function VPLLSimulator() {
           <button className={`vpll-tab ${activeTab === "season" ? "active" : ""}`} onClick={() => setActiveTab("season")}>Season</button>
           <button className={`vpll-tab ${activeTab === "playoffs" ? "active" : ""}`} onClick={() => setActiveTab("playoffs")}>Playoffs</button>
           <button className={`vpll-tab ${activeTab === "standings" ? "active" : ""}`} onClick={() => setActiveTab("standings")}>Standings</button>
+          <button className={`vpll-tab ${activeTab === "stats" ? "active" : ""}`} onClick={() => setActiveTab("stats")}>Stats</button>
           <button className={`vpll-tab ${activeTab === "offseason" ? "active" : ""}`} onClick={() => setActiveTab("offseason")}>Offseason</button>
           <button className={`vpll-tab ${activeTab === "pressbox" ? "active" : ""}`} onClick={() => setActiveTab("pressbox")}>Press Box</button>
         </nav>
@@ -1208,6 +1255,70 @@ export default function VPLLSimulator() {
                 )}
               </>
             )}
+          </section>
+        )}
+
+        {activeTab === "stats" && (
+          <section>
+            {!seasons.corkum ? (
+              <div className="vpll-empty">No season data yet. Generate and simulate a season from the Season tab to see individual leaderboards.</div>
+            ) : (() => {
+              const statSourceStore = statsScope === "career" ? CAREER_STATS : (seasons[statsSeasonType]?.playerStats || {});
+              const activeCategory = STAT_CATEGORIES.find((c) => c.key === statsCategory);
+              const leaders = topByStat(statSourceStore, statsCategory, { positions: activeCategory.positions, n: 10 });
+              const isRate = statsCategory === "foPct" || statsCategory === "savePct";
+              return (
+                <>
+                  <div className="vpll-info-banner">
+                    Season leaders are regular-season only (Corkum or Culkin, not combined) and reset each year; Career totals
+                    accumulate across every regular season a player's ever played, and follow the player even after a trade or
+                    free-agent signing. None of this is a literal recorded play-by-play — this engine simulates a final score
+                    from team ratings, not individual possessions — so every number here is a weighted attribution of that real
+                    outcome onto the players most likely to have produced it, the same way the box score under a played game
+                    already worked.
+                  </div>
+                  <div className="vpll-toggle-group" style={{ marginBottom: 14 }}>
+                    <button className={`vpll-toggle-btn ${statsScope === "season" ? "active" : ""}`} onClick={() => setStatsScope("season")}>Season</button>
+                    <button className={`vpll-toggle-btn ${statsScope === "career" ? "active" : ""}`} onClick={() => setStatsScope("career")}>Career</button>
+                  </div>
+                  {statsScope === "season" && (
+                    <div className="vpll-toggle-group" style={{ marginBottom: 14 }}>
+                      <button className={`vpll-toggle-btn ${statsSeasonType === "corkum" ? "active" : ""}`} onClick={() => setStatsSeasonType("corkum")}>Corkum</button>
+                      <button className={`vpll-toggle-btn ${statsSeasonType === "culkin" ? "active" : ""}`} onClick={() => setStatsSeasonType("culkin")} disabled={!seasons.culkin}>Culkin</button>
+                    </div>
+                  )}
+                  <div className="vpll-toggle-group" style={{ marginBottom: 18, flexWrap: "wrap" }}>
+                    {STAT_CATEGORIES.map((c) => (
+                      <button key={c.key} className={`vpll-toggle-btn ${statsCategory === c.key ? "active" : ""}`} onClick={() => setStatsCategory(c.key)}>{c.label}</button>
+                    ))}
+                  </div>
+                  <div className="vpll-h2">
+                    {activeCategory.label} Leaders — {statsScope === "career" ? "Career" : SEASON_LABEL[statsSeasonType]}
+                  </div>
+                  {leaders.length === 0 ? (
+                    <div className="vpll-empty">Nobody qualifies yet — simulate more games.</div>
+                  ) : (
+                    <table className="vpll-standings-table">
+                      <thead>
+                        <tr><th>#</th><th>Player</th><th>Team</th><th>Pos</th><th className="num">{activeCategory.label}</th><th className="num">Detail</th></tr>
+                      </thead>
+                      <tbody>
+                        {leaders.map((l, i) => (
+                          <tr key={l.id}>
+                            <td>{i + 1}</td>
+                            <td>{l.name}</td>
+                            <td><div className="vpll-team-name-row"><TeamLogo teamName={l.team} size={18} />{l.team}</div></td>
+                            <td>{l.pos}</td>
+                            <td className="num">{isRate ? `${(l.value * 100).toFixed(1)}%` : l.value}</td>
+                            <td className="num">{activeCategory.detail(l)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              );
+            })()}
           </section>
         )}
 
