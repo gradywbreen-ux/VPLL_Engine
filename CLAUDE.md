@@ -155,6 +155,22 @@ Current module layout:
   corrupted local save data, where a plain reload would just crash again)
 - `src/styles/styles.js` — the CSS-in-JS design system
 - `src/storage.js` — localStorage-backed replacement for `window.storage`, same key names
+- `src/saveTransfer.js` — league save export/import (task #52). Persistence is entirely
+  localStorage-backed, so losing browser storage loses the whole league permanently with no
+  way to back it up or move it; this gives the Commissioner a real file. `buildLeagueSaveExport()`
+  bundles the live storage keys (`SAVE_KEYS` — everything except the legacy pre-Culkin
+  `vpll-season-state`, which App.jsx migrates away on load and never writes again) into one
+  JSON envelope, passing each key's value through as the raw already-stringified string
+  rather than re-parsing/re-embedding it, so a round trip can't subtly alter anything.
+  `validateLeagueSave()` is deliberately pure (no storage/DOM access) so it's unit-tested
+  directly; `applyLeagueSave()` replaces (not merges) storage — any known key absent from an
+  imported file gets deleted, not left over from the current session. The Offseason tab's
+  Export button needs no confirmation (non-destructive); Import gets the same two-step
+  confirm as Reset League to Year 1, validates the file first with a friendly error on
+  anything malformed, and reloads the page after writing rather than hand-resyncing every
+  piece of React state and the live TEAMS/COACHES/PLAYERS_RAW/PLAYER_POOL/CAREER_STATS
+  singletons — the existing load effect already knows how to build a consistent app state
+  from storage on mount, so reusing that path beats duplicating it
 - `src/App.jsx` — the main component (tabs: Exhibition, Season, Playoffs, Standings, Offseason,
   Press Box), wired to all of the above
 - `scripts/lib/simulateLeague.mjs` + `scripts/simulate-years.mjs` — headless multi-year
@@ -162,7 +178,7 @@ Current module layout:
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
   `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`,
   `awards.test.js`, `hometown.test.js`, `deactivation.test.js`, `boxScore.test.js`,
-  `playerId.test.js`, `playerStats.test.js`
+  `playerId.test.js`, `playerStats.test.js`, `saveTransfer.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -289,7 +305,13 @@ real automated suite instead of the fully-manual process this section used to de
   share a name accumulate separately because they're keyed by id and not name — proving the
   exact collision `playerId.js` exists to prevent — `subtractSeasonFromCareer()` reverses only
   what a given season actually contributed, and `topByStat()`'s position filter and rate-stat
-  minimum-attempts floor). All run in well under a second combined.
+  minimum-attempts floor), and `saveTransfer.test.js` (`validateLeagueSave()` against a
+  well-formed save, an empty/fresh one, wrong/missing format tag, missing or non-object
+  `data`, a non-string or invalid-JSON value on a known key, and that an unrecognized key
+  is ignored rather than rejecting the whole file — the one piece of the export/import
+  feature pure enough to unit test without a real browser; `buildLeagueSaveExport()`/
+  `applyLeagueSave()` go through `storage.js`'s real localStorage and are verified by
+  hand/Playwright instead). All run in well under a second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,

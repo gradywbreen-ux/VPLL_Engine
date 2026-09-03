@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import {
   TEAMS, PLAYERS_RAW, COACHES, TEAM_NAMES, POS_NAME, PLAYER_POOL, CAREER_STATS,
@@ -34,6 +34,7 @@ import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInRev
 import { fetchArticle } from "./pressbox/api.js";
 import { STYLES } from "./styles/styles.js";
 import { storage } from "./storage.js";
+import { buildLeagueSaveExport, validateLeagueSave, applyLeagueSave } from "./saveTransfer.js";
 import leagueIconUrl from "./assets/logo/vpll-league-icon.png";
 
 import { RatingBar } from "./components/RatingBar.jsx";
@@ -668,6 +669,64 @@ export default function VPLLSimulator() {
       await storage.delete("vpll-pressbox-archive");
     } catch (e) { /* keys may not exist yet, fine either way */ }
     setConfirmReset(false);
+  }, []);
+
+  /* ---------- League Save Export / Import (task #52) ----------
+     Persistence is entirely localStorage-backed — losing browser storage loses the whole
+     league permanently, with no way to back it up or move it to another machine. Export
+     always works with no confirmation (non-destructive); import overwrites everything
+     current, so it gets the same two-step confirm as Reset League to Year 1 above, plus
+     upfront validation (src/saveTransfer.js) so a bad file fails with a clear message
+     instead of silently corrupting storage. Applying an import reloads the page rather
+     than trying to hand-resync every piece of React state (and the live TEAMS/COACHES/
+     PLAYERS_RAW/PLAYER_POOL/CAREER_STATS singletons) one at a time — the existing load
+     effect already knows how to build a consistent app state from storage on mount, so
+     reusing that path is far less error-prone than duplicating it here. */
+  const [importError, setImportError] = useState(null);
+  const [confirmImport, setConfirmImport] = useState(false);
+  const [pendingImport, setPendingImport] = useState(null); // validated, not-yet-applied import, awaiting confirmation
+  const importFileInputRef = useRef(null);
+
+  const exportLeagueSave = useCallback(async () => {
+    const save = await buildLeagueSaveExport({ yearNumber });
+    const blob = new Blob([JSON.stringify(save, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `vpll-save-year${yearNumber}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [yearNumber]);
+
+  const handleImportFileChosen = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // clears the input so choosing the same file again still fires a change event
+    if (!file) return;
+    setImportError(null);
+    setPendingImport(null);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const result = validateLeagueSave(parsed);
+      if (!result.ok) { setImportError(result.error); return; }
+      setPendingImport(parsed);
+      setConfirmImport(true);
+    } catch (err) {
+      setImportError(`Couldn't read that file: ${err.message}`);
+    }
+  }, []);
+
+  const confirmImportLeagueSave = useCallback(async () => {
+    if (!pendingImport) return;
+    await applyLeagueSave(pendingImport);
+    window.location.reload(); // simplest way to get every piece of state to match the new storage contents
+  }, [pendingImport]);
+
+  const cancelImportLeagueSave = useCallback(() => {
+    setConfirmImport(false);
+    setPendingImport(null);
   }, []);
 
   /* ---------- Press Box (Phase 5: narrative layer) ---------- */
@@ -1620,6 +1679,36 @@ export default function VPLLSimulator() {
                 ))}
               </div>
             )}
+
+            <div style={{ marginTop: 32, paddingTop: 20, borderTop: "1px dashed var(--line)" }}>
+              <div className="vpll-section-label">League Save</div>
+              <div className="vpll-info-banner">
+                Everything lives in this browser's local storage — clearing it, switching browsers, or moving to a
+                new device loses the league for good. Export a backup file any time; import one to restore it (this
+                overwrites whatever's currently loaded).
+              </div>
+              <div className="vpll-controls-row">
+                <button className="vpll-btn secondary" onClick={exportLeagueSave}>Export League Save</button>
+                <button className="vpll-btn secondary" onClick={() => importFileInputRef.current?.click()}>Import League Save…</button>
+                <input
+                  ref={importFileInputRef} type="file" accept="application/json,.json"
+                  style={{ display: "none" }} onChange={handleImportFileChosen}
+                />
+              </div>
+              {importError && <div className="vpll-press-error" style={{ marginTop: 10 }}>{importError}</div>}
+              {confirmImport && pendingImport && (
+                <div className="vpll-info-banner" style={{ borderColor: "var(--barn)", marginTop: 10 }}>
+                  Importing this file replaces the entire league currently loaded — every team rating, coach,
+                  roster, season, and history entry — with what's in the file
+                  {pendingImport.exportedAt ? ` (exported ${new Date(pendingImport.exportedAt).toLocaleString()})` : ""}.
+                  The page will reload to apply it.
+                  <div className="vpll-controls-row" style={{ marginTop: 10 }}>
+                    <button className="vpll-btn" style={{ background: "var(--barn)", color: "var(--white)" }} onClick={confirmImportLeagueSave}>Yes, Import &amp; Replace</button>
+                    <button className="vpll-btn secondary" onClick={cancelImportLeagueSave}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div style={{ marginTop: 32, paddingTop: 20, borderTop: "1px dashed var(--line)" }}>
               <div className="vpll-section-label">Danger Zone</div>
