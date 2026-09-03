@@ -35,6 +35,7 @@ import {
   cutRosterToSize, ensureFloorBeforeRemoval, maintainPlayerPool,
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, MAX_POOL_PER_POSITION, POSITION_MINIMUMS,
 } from "../../src/engine/roster.js";
+import { assignHometown } from "../../src/engine/hometown.js";
 
 /* ---------- Season + playoffs, one season type, fully to completion ---------- */
 function simulateFullSeasonResults(schedule, isIndoor) {
@@ -117,6 +118,7 @@ function runDraft(combinedCupStandings) {
       const roundScale = [1, 0.75, 0.55, 0.4, 0.3][round - 1];
       tuple[9] = Math.round((tuple[9] * roundScale) / 500) * 500;
       tuple[12] = pr.ceiling;
+      tuple[13] = assignHometown();
       PLAYERS_RAW[team].push(tuple);
       overallPick++;
     }

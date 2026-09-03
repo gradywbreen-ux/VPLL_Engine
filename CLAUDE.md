@@ -65,10 +65,34 @@ Current module layout:
   block, just a scaled-down chance, since teams do sometimes pay the tax for a player worth it;
   market-wide cap tightness also dampens how aggressively the Mercenary branch chases bidding
   wars league-wide. This is the one subsystem that used to be duplicated across `App.jsx` and
-  the harness — now both just call `runFreeAgency()`. The spec's homegrown-bonus idea is **not**
-  implemented: it depends on a hometown-matches-team signal that doesn't exist anywhere in the
-  engine despite Master File 9.3 describing the system — no player tuple field, no assignment
-  code. Building that is a separate subsystem, flagged rather than faked), `awards` (Master File
+  the harness — now both just call `runFreeAgency()`. The spec's homegrown bonus is now real
+  (a modest re-sign bump in `reSignChance()` and a `needScore` nudge in `rankTeamsForPlayer()`
+  when `player[13] === team`), now that `hometown.js` (below) gives every player a real
+  hometown to check against. §6 Indoor Specialist Market (Master File 9.8) is implemented as a
+  `needScore` bonus keyed off the same `bal` field/scale `deactivation.js` uses, standing in for
+  the doc's literal "20% turnover allowance" (no such hard cap exists anywhere else in this
+  engine's free agency, consistent with the Culkin roster-carryover abstraction noted below). §7
+  real multi-team bidding: `runFreeAgency()`'s signing loop tries up to the top 3 ranked
+  contenders in sequence, each an independent decreasing-probability roll (0.35/0.25/0.15,
+  tuned so the combined chance lands close to the old flat single-roll 0.6 rather than inflating
+  free-agent movement) — every `signed` entry carries a `runnersUp` list of the teams that also
+  pursued but didn't land the player), `hometown` (Master File 9.3 — every player gets a
+  permanent hometown team, assigned once at creation (`assignHometown()`, tuple index 13 — see
+  "Player data format" below) and weighted by market size via `MARKET_TIER`, the Master File
+  13.1 big/mid/small market table for all 32 real teams (weights 3/2/1 — Tier 3 never drops to
+  zero, per the doc). `bootstrapHometownsIfNeeded()` migrates any pre-existing save the same way
+  `bootstrapContractsIfNeeded()`/`migrateLSMIfNeeded()` do, called from both `resetLeagueDataToYear1()`
+  and `App.jsx`'s load effect. Consumed by `freeAgency.js`'s homegrown bonus above and by
+  `awards.js` only indirectly (it doesn't gate any award itself)), `deactivation` (Master File
+  9.8 Deactivation Lists — up to 5 players/team/season sit out while retaining their roster spot,
+  selected from genuine indoor/outdoor misfits via each player's own `bal` field (tuple index 7,
+  same scale/semantics as the team-level rating), never dropping an active position group below
+  `roster.js`'s `POSITION_MINIMUMS`. This engine has no literal per-game lineup selection
+  (team-aggregate ratings drive simulation, not individual players), so deactivation's real
+  mechanical effect is scoped to what that model can express: `App.jsx`'s `startNewSeason()`
+  computes `computeAllDeactivations()` once per season and stores it on the season object as
+  `deactivated`, which `awards.js` (below) then excludes from every award scoped to that season),
+  `awards` (Master File
   Section 10 — MVP, Offensive/Defensive Player of the Year, Most Outstanding Goalie, Rookie of
   the Year, Coach of the Year, both Trophy Finals MVPs, the Davidson Award (Commissioners Cup
   MVP), and First/Second Team All-VPLL + All-Rookie Team. Built entirely from signals the engine
@@ -77,11 +101,15 @@ Current module layout:
   (goals/assists), which don't exist anywhere in this engine and are a separately-deferred
   system (see "Known scope boundaries" below); every award is a genuine proxy for what the doc
   describes, not a fabricated stand-in for a missing signal. Comeback Player of the Year is
-  **not** implemented for the same reason as the homegrown bonus above — it needs multi-year
-  per-player injury/struggle history that doesn't exist on the player tuple or anywhere else.
-  Rookie identity is tracked explicitly (`currentRookies` state in `App.jsx`, snapshotted from
-  the draft class right before `beginYear2` resets `offseason`) rather than inferred from
-  contract-year arithmetic, which would have been fragile and implicit)
+  **still not** implemented — unlike the homegrown bonus, it needs multi-year per-player
+  injury/struggle history that doesn't exist on the player tuple or anywhere else, and
+  `deactivation.js` doesn't fill that gap. Rookie identity is tracked explicitly (`currentRookies`
+  state in `App.jsx`, snapshotted from the draft class right before `beginYear2` resets
+  `offseason`) rather than inferred from contract-year arithmetic, which would have been fragile
+  and implicit. Every player-scoped award takes an optional `deactivated` param (`{ team: [names] }`
+  for the season being evaluated, from `deactivation.js` above) and excludes anyone on it — the
+  Davidson Award (evaluated across both seasons combined) and Coach of the Year (team-level, not
+  a player award) don't take one)
 - `src/pressbox/` — `prompts.js` (recap / Hot Stove / Week in Review prompt builders),
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
@@ -95,7 +123,7 @@ Current module layout:
   simulation harness and CLI report (see "Testing workflow" below)
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
   `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`,
-  `awards.test.js`
+  `awards.test.js`, `hometown.test.js`, `deactivation.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -121,10 +149,12 @@ mounts. Don't lose this pattern in a refactor — it's what "Reset to Year 1" re
 Players are compact tuples, not objects (to keep embedded payload size down):
 ```
 [name, pos, hand, age, overall, starFlag, leadership, balance, durability,
- aav, yearsRemaining, contractType, ceiling]
+ aav, yearsRemaining, contractType, ceiling, hometown]
 ```
 Indices 9-12 (contract + dev ceiling fields) were added after the original embed — always
-guard for `undefined` on old saves (`bootstrapContractsIfNeeded()` handles this). `ceiling`
+guard for `undefined` on old saves (`bootstrapContractsIfNeeded()` handles this). Index 13
+(`hometown`, a team name — see `src/engine/hometown.js` above) was added the same way, guarded
+by `bootstrapHometownsIfNeeded()`. `ceiling`
 (index 12) is only set for draft picks; established players have no growth target, which is
 intentional — only young/drafted talent develops.
 
@@ -189,12 +219,21 @@ real automated suite instead of the fully-manual process this section used to de
   `pickMotivation()`'s tier-based distribution over a large sample, `projectedCapFine()` against
   a controlled payroll, `reSignChance()`'s coach-fit bump/penalty and its cap-pressure dampening
   — reduced but never fully blocked — and `runTradeEngine()`'s salary-dump phase actually moving
-  the highest-AAV player off a team paying a luxury fine), and `awards.test.js` (every award's
-  selection logic against a fully controlled league roster so a real embedded player can never
-  accidentally win a test by coincidence — position filters for OPOY/DPOY/MOG, the MVP context
-  bonus actually favoring a weaker team, Coach of the Year's overachievement math, the Davidson
-  Award's balance-eligibility filter and its full-roster fallback, and All-VPLL/All-Rookie Team
-  composition and no player appearing on both teams). All run in well under a second combined.
+  the highest-AAV player off a team paying a luxury fine, plus the homegrown re-sign bump and
+  that every real signing carries a `runnersUp` list from the multi-team bidding pass),
+  `awards.test.js` (every award's selection logic against a fully controlled league roster so a
+  real embedded player can never accidentally win a test by coincidence — position filters for
+  OPOY/DPOY/MOG, the MVP context bonus actually favoring a weaker team, Coach of the Year's
+  overachievement math, the Davidson Award's balance-eligibility filter and its full-roster
+  fallback, All-VPLL/All-Rookie Team composition and no player appearing on both teams, and that
+  a `deactivated` player is excluded from every award scoped to that season), `hometown.test.js`
+  (`MARKET_TIER` covers all 32 real teams exactly once, `assignHometown()` always returns a real
+  team and weights Tier 1 above Tier 3 over a large sample, `bootstrapHometownsIfNeeded()`
+  backfills missing hometowns on rostered/pooled players without ever overwriting an existing
+  one), and `deactivation.test.js` (misfit selection sits the right specialists for the right
+  season, the 5-player cap, and that a deactivation never drops an active position group below
+  `POSITION_MINIMUMS`, including with a surplus above the floor). All run in well under a second
+  combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
@@ -287,9 +326,6 @@ Deliberately not the generic AI-assistant look — grounded in Vermont + the spo
   (Master File Section 10) is built entirely around this gap rather than blocked by it — every
   award uses ratings/standings/roster signals instead, and Comeback Player of the Year is
   skipped outright since it specifically needs data this system doesn't have
-- **Hometown system** (Master File 9.3) — not implemented anywhere: no player tuple field, no
-  assignment code. The free agency tiers spec's homegrown-bonus idea depends on it and was
-  skipped for the same reason
 - **Culkin (indoor) roster carryover** is abstracted, not literal — Culkin uses the same
   ratings/rosters as Corkum with the Balance modifier doing the work, rather than a true
   80%-carryover roster mutation between seasons

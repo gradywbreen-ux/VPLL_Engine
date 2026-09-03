@@ -22,6 +22,12 @@ import { TEAMS, COACHES, PLAYERS_RAW, TEAM_NAMES } from "../data/rawData.js";
    Midfield, 2 Long-Stick Midfield, 2 Defense, 1 FOGO, 1 Goalie — 11 total) as
    an established "typical lineup shape" already used elsewhere in this
    codebase, since the Master File doesn't specify roster construction.
+
+   A deactivated player (src/engine/deactivation.js) didn't play the season in
+   question, so every award scoped to *that* season excludes them — the
+   optional `deactivated` param below, `{ team: [names] }` for the season being
+   evaluated. The Davidson Award (evaluated across both seasons combined) and
+   Coach of the Year (team-level, not a player award) don't take one.
    ============================================================ */
 
 const OFFENSIVE_POSITIONS = ["A", "M"];
@@ -42,11 +48,18 @@ function playerRecord(team, p) {
   return { team, name: p[0], pos: p[1], ovr: p[4] };
 }
 
+// deactivated: optional { team: [names] } for the season being evaluated — a
+// deactivated player didn't play, so every award scoped to that season skips them.
+function isDeactivated(deactivated, team, name) {
+  return !!deactivated?.[team]?.includes(name);
+}
+
 // Shared scan: score every rostered player (optionally filtered), return the highest.
-function bestPlayerByScore(scoreFn, filterFn) {
+function bestPlayerByScore(scoreFn, filterFn, deactivated) {
   let best = null;
   for (const team of TEAM_NAMES) {
     for (const p of PLAYERS_RAW[team]) {
+      if (isDeactivated(deactivated, team, p[0])) continue;
       if (filterFn && !filterFn(p, team)) continue;
       const score = scoreFn(p, team);
       if (score == null) continue;
@@ -61,59 +74,63 @@ function bestPlayerByScore(scoreFn, filterFn) {
 // Most impactful player FOR their team, not automatically the best player on the
 // best team — a comparably great player elevating a weaker or rebuilding roster
 // gets a real (but modest, overall still dominates) bonus.
-export function computeMVP() {
+export function computeMVP(deactivated) {
   const avgScore = leagueAvgTeamScore();
   return bestPlayerByScore((p, team) => {
     const contextBonus = Math.max(0, avgScore - TEAMS[team].score) * 1.2 + (UNDERDOG_TAG_BONUS[TEAMS[team].tag] || 0);
     return p[4] + contextBonus;
-  });
+  }, null, deactivated);
 }
 
 // Best offensive performer — restricted to Attack/Midfield, weighted toward teams
 // whose Offensive Risk/Pace ratings suggest a system that showcases them.
-export function computeOffensivePlayerOfTheYear() {
+export function computeOffensivePlayerOfTheYear(deactivated) {
   return bestPlayerByScore(
     (p, team) => {
       const t = TEAMS[team];
       return p[4] + (t.offRisk + t.offPac) * 0.6;
     },
-    (p) => OFFENSIVE_POSITIONS.includes(p[1])
+    (p) => OFFENSIVE_POSITIONS.includes(p[1]),
+    deactivated
   );
 }
 
 // Best defensive performer — restricted to Defense/Long-Stick Midfield/FOGO,
 // weighted toward teams whose Defensive Positioning/Pressure/Penalty Kill
 // ratings reflect a real defensive identity.
-export function computeDefensivePlayerOfTheYear() {
+export function computeDefensivePlayerOfTheYear(deactivated) {
   return bestPlayerByScore(
     (p, team) => {
       const t = TEAMS[team];
       return p[4] + (t.defPos + t.defPre + t.pk) * 0.4;
     },
-    (p) => DEFENSIVE_POSITIONS.includes(p[1])
+    (p) => DEFENSIVE_POSITIONS.includes(p[1]),
+    deactivated
   );
 }
 
 // Separate from Defensive POY — goalies only, weighted toward Stopping/
 // Consistency/Passing, the three traits the Master File calls out by name.
-export function computeMostOutstandingGoalie() {
+export function computeMostOutstandingGoalie(deactivated) {
   return bestPlayerByScore(
     (p, team) => {
       const t = TEAMS[team];
       return p[4] + (t.glcStp + t.glcCon + t.glcPas) * 0.4;
     },
-    (p) => p[1] === "G"
+    (p) => p[1] === "G",
+    deactivated
   );
 }
 
 // rookieNames: this season's true first-year players (App.jsx tracks who was
 // drafted the offseason immediately before this season — see currentRookies).
-export function computeRookieOfTheYear(rookieNames) {
+export function computeRookieOfTheYear(rookieNames, deactivated) {
   if (!rookieNames || !rookieNames.length) return null;
   const rookieSet = new Set(rookieNames);
   return bestPlayerByScore(
     (p, team) => p[4] + (UNDERDOG_TAG_BONUS[TEAMS[team].tag] ? 2 : 0),
-    (p) => rookieSet.has(p[0])
+    (p) => rookieSet.has(p[0]),
+    deactivated
   );
 }
 
@@ -139,10 +156,10 @@ export function computeCoachOfTheYear(table) {
 // Trophy Final MVP — the winning team's top player. No per-game individual
 // series stats exist to break ties on, so star flag then overall then
 // leadership stand in as the tiebreak order.
-export function computeTrophyFinalsMVP(playoffs) {
+export function computeTrophyFinalsMVP(playoffs, deactivated) {
   const winner = playoffs?.champion;
   if (!winner) return null;
-  const roster = PLAYERS_RAW[winner];
+  const roster = PLAYERS_RAW[winner].filter((p) => !isDeactivated(deactivated, winner, p[0]));
   if (!roster.length) return null;
   const top = [...roster].sort((a, b) => (b[5] - a[5]) || (b[4] - a[4]) || (b[6] - a[6]))[0];
   return playerRecord(winner, top);
@@ -166,12 +183,13 @@ export function computeDavidsonAward(cupChampionTeam) {
 
 /* ---------- 10.3 All-VPLL Teams ---------- */
 
-function topNAtPosition(pos, n, exclude, filterFn) {
+function topNAtPosition(pos, n, exclude, filterFn, deactivated) {
   const candidates = [];
   for (const team of TEAM_NAMES) {
     for (const p of PLAYERS_RAW[team]) {
       if (p[1] !== pos) continue;
       if (exclude.has(`${team} ${p[0]}`)) continue;
+      if (isDeactivated(deactivated, team, p[0])) continue;
       if (filterFn && !filterFn(p, team)) continue;
       candidates.push({ team, p });
     }
@@ -183,40 +201,42 @@ function topNAtPosition(pos, n, exclude, filterFn) {
   });
 }
 
-function composeLineup(exclude, filterFn) {
+function composeLineup(exclude, filterFn, deactivated) {
   const counts = {};
   for (const pos of ALL_VPLL_SHAPE) counts[pos] = (counts[pos] || 0) + 1;
   const lineup = [];
-  for (const [pos, n] of Object.entries(counts)) lineup.push(...topNAtPosition(pos, n, exclude, filterFn));
+  for (const [pos, n] of Object.entries(counts)) lineup.push(...topNAtPosition(pos, n, exclude, filterFn, deactivated));
   return lineup;
 }
 
 // First and Second Team share one exclusion set, so the same player can't
 // appear on both.
-export function computeAllVPLLTeams() {
+export function computeAllVPLLTeams(deactivated) {
   const exclude = new Set();
-  const firstTeam = composeLineup(exclude);
-  const secondTeam = composeLineup(exclude);
+  const firstTeam = composeLineup(exclude, null, deactivated);
+  const secondTeam = composeLineup(exclude, null, deactivated);
   return { firstTeam, secondTeam };
 }
 
-export function computeAllRookieTeam(rookieNames) {
+export function computeAllRookieTeam(rookieNames, deactivated) {
   if (!rookieNames || !rookieNames.length) return [];
   const rookieSet = new Set(rookieNames);
-  return composeLineup(new Set(), (p) => rookieSet.has(p[0]));
+  return composeLineup(new Set(), (p) => rookieSet.has(p[0]), deactivated);
 }
 
 /* ---------- One call for a season's full award slate ---------- */
-export function computeSeasonAwards(table, playoffs, rookieNames) {
+// deactivated: optional { team: [names] } for this season (src/engine/deactivation.js) —
+// excludes deactivated players from every award scoped to this season's play.
+export function computeSeasonAwards(table, playoffs, rookieNames, deactivated) {
   return {
-    mvp: computeMVP(),
-    opoy: computeOffensivePlayerOfTheYear(),
-    dpoy: computeDefensivePlayerOfTheYear(),
-    mog: computeMostOutstandingGoalie(),
-    roy: computeRookieOfTheYear(rookieNames),
+    mvp: computeMVP(deactivated),
+    opoy: computeOffensivePlayerOfTheYear(deactivated),
+    dpoy: computeDefensivePlayerOfTheYear(deactivated),
+    mog: computeMostOutstandingGoalie(deactivated),
+    roy: computeRookieOfTheYear(rookieNames, deactivated),
     coy: computeCoachOfTheYear(table),
-    finalsMVP: computeTrophyFinalsMVP(playoffs),
-    allVPLL: computeAllVPLLTeams(),
-    allRookie: computeAllRookieTeam(rookieNames),
+    finalsMVP: computeTrophyFinalsMVP(playoffs, deactivated),
+    allVPLL: computeAllVPLLTeams(deactivated),
+    allRookie: computeAllRookieTeam(rookieNames, deactivated),
   };
 }

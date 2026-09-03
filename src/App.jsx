@@ -26,6 +26,8 @@ import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
 import { evaluateRetirement } from "./engine/retirement.js";
 import { runFreeAgency, FREE_AGENT_TIER_NAMES } from "./engine/freeAgency.js";
 import { computeSeasonAwards, computeDavidsonAward } from "./engine/awards.js";
+import { assignHometown, bootstrapHometownsIfNeeded } from "./engine/hometown.js";
+import { computeAllDeactivations } from "./engine/deactivation.js";
 import { buildTeamContext, buildRecapPrompt, buildHotStovePrompt, buildWeekInReviewPrompt } from "./pressbox/prompts.js";
 import { fetchArticle } from "./pressbox/api.js";
 import { STYLES } from "./styles/styles.js";
@@ -81,6 +83,7 @@ export default function VPLLSimulator() {
 
       bootstrapContractsIfNeeded(); // no-op for anyone whose save already has contracts assigned
       migrateLSMIfNeeded(); // no-op for anyone whose save already has the position
+      bootstrapHometownsIfNeeded(); // no-op for anyone whose save already has hometowns assigned
 
       try {
         const meta = await storage.get("vpll-meta-state");
@@ -147,7 +150,9 @@ export default function VPLLSimulator() {
   const startNewSeason = useCallback(async (seasonType) => {
     if (seasonType === "culkin" && !culkinUnlocked) return;
     const schedule = generateFullSchedule();
-    const newSeasonObj = { schedule, results: {}, playoffs: null };
+    // Deactivation Lists (Master File 9.8) — decided once, right as the season opens.
+    const deactivated = computeAllDeactivations(seasonType === "culkin");
+    const newSeasonObj = { schedule, results: {}, playoffs: null, deactivated };
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
   }, [seasons, persistSeasons, culkinUnlocked]);
 
@@ -426,6 +431,7 @@ export default function VPLLSimulator() {
         const roundScale = [1, 0.75, 0.55, 0.4, 0.3][round - 1];
         tuple[9] = Math.round((tuple[9] * roundScale) / 500) * 500;
         tuple[12] = pr.ceiling; // development target — this is what lets a pick actually pan out (or not)
+        tuple[13] = assignHometown();
         PLAYERS_RAW[team].push(tuple);
         overallPick++;
       }
@@ -770,8 +776,8 @@ export default function VPLLSimulator() {
     try {
       const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0]?.team;
       const awards = {
-        corkum: seasons.corkum?.playoffs ? computeSeasonAwards(standingsFor.corkum, seasons.corkum.playoffs, currentRookies) : null,
-        culkin: seasons.culkin?.playoffs ? computeSeasonAwards(standingsFor.culkin, seasons.culkin.playoffs, currentRookies) : null,
+        corkum: seasons.corkum?.playoffs ? computeSeasonAwards(standingsFor.corkum, seasons.corkum.playoffs, currentRookies, seasons.corkum.deactivated) : null,
+        culkin: seasons.culkin?.playoffs ? computeSeasonAwards(standingsFor.culkin, seasons.culkin.playoffs, currentRookies, seasons.culkin.deactivated) : null,
         davidson: computeDavidsonAward(cupChampion),
       };
       const prompt = buildHotStovePrompt({
@@ -1064,7 +1070,7 @@ export default function VPLLSimulator() {
                   </div>
                 )}
                 {seasons[activeSeasonType].playoffs.champion && (() => {
-                  const awards = computeSeasonAwards(standingsFor[activeSeasonType], seasons[activeSeasonType].playoffs, currentRookies);
+                  const awards = computeSeasonAwards(standingsFor[activeSeasonType], seasons[activeSeasonType].playoffs, currentRookies, seasons[activeSeasonType].deactivated);
                   const AWARD_ROWS = [
                     ["Most Valuable Player", awards.mvp],
                     ["Offensive Player of the Year", awards.opoy],

@@ -12,15 +12,15 @@ import { TEAMS, COACHES, PLAYERS_RAW } from "../src/data/rawData.js";
 import { SALARY_CAP, capFine } from "../src/engine/contracts.js";
 import { HC_TAG_FIT } from "../src/engine/simulation.js";
 import {
-  freeAgentTier, pickMotivation, projectedCapFine, reSignChance,
+  freeAgentTier, pickMotivation, projectedCapFine, reSignChance, runFreeAgency,
 } from "../src/engine/freeAgency.js";
 import { runTradeEngine } from "../src/engine/trades.js";
 
 const TEAM = "Saint Albans Dawnlanders";
 
-// player tuple: [name, pos, hand, age, overall, star, leadership, balance, durability, aav, yearsRemaining, contractType, ceiling]
-function makePlayer(name, pos, overall, { star = 0, aav = 20000, age = 27 } = {}) {
-  return [name, pos, "R", age, overall, star, 50, 5, 60, aav, 3, "S", null];
+// player tuple: [name, pos, hand, age, overall, star, leadership, balance, durability, aav, yearsRemaining, contractType, ceiling, hometown]
+function makePlayer(name, pos, overall, { star = 0, aav = 20000, age = 27, hometown = null } = {}) {
+  return [name, pos, "R", age, overall, star, 50, 5, 60, aav, 3, "S", null, hometown];
 }
 
 function withFreshRoster(roster, fn) {
@@ -164,4 +164,32 @@ test("runTradeEngine's salary-dump phase moves a team's highest-AAV player when 
     }
   }
   assert.ok(dumpedCount > 0, "a team deep in a luxury-tax fine should shed salary at least sometimes across 60 trials");
+});
+
+test("reSignChance gives a homegrown player (hometown === team) a bump over an identical player from elsewhere", () => {
+  const standings = { [TEAM]: { points: 10 } };
+  const homegrown = reSignChance("Loyalist", TEAM, standings, 20_000, makePlayer("Local Hero", "M", 70, { hometown: TEAM }));
+  const outsider = reSignChance("Loyalist", TEAM, standings, 20_000, makePlayer("Outsider", "M", 70, { hometown: "Rutland Cryptids" }));
+  const noPlayer = reSignChance("Loyalist", TEAM, standings, 20_000);
+  assert.ok(homegrown > outsider, "a player re-signing with their own hometown team should be more likely to stay");
+  assert.equal(outsider, noPlayer, "an omitted player and a non-hometown player should behave identically");
+});
+
+test("runFreeAgency's signed entries each carry a runnersUp list from the real multi-team bidding pass", () => {
+  const standings = Object.fromEntries(
+    Object.keys(TEAMS).map((t) => [t, { points: Math.round(Math.random() * 30), w: 5, l: 5, otl: 0 }])
+  );
+  const originalLeague = JSON.parse(JSON.stringify(PLAYERS_RAW));
+  try {
+    const result = runFreeAgency(standings);
+    assert.ok(Array.isArray(result.signed));
+    for (const entry of result.signed) {
+      assert.ok(Array.isArray(entry.runnersUp), "every signing should record which other bidders it beat out (possibly empty)");
+    }
+  } finally {
+    for (const t of Object.keys(originalLeague)) {
+      PLAYERS_RAW[t].length = 0;
+      PLAYERS_RAW[t].push(...originalLeague[t]);
+    }
+  }
 });

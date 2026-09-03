@@ -207,3 +207,39 @@ test("computeAllRookieTeam only draws from the rookie name set and matches the s
 test("computeAllRookieTeam returns an empty list with no rookies", () => {
   assert.deepEqual(computeAllRookieTeam([]), []);
 });
+
+test("computeMVP skips a player deactivated for this season (Master File 9.8) in favor of the next-best", () => {
+  const originalScore = TEAMS[TEAM].score;
+  TEAMS[TEAM].score = 50;
+  try {
+    withControlledLeague(
+      { [TEAM]: [makePlayer("Sat Out", "M", 95, { star: 1 }), makePlayer("Played", "M", 70)] },
+      () => {
+        const deactivated = { [TEAM]: ["Sat Out"] };
+        const mvp = computeMVP(deactivated);
+        assert.equal(mvp.name, "Played", "a deactivated player should never win an award for a season they didn't play");
+      }
+    );
+  } finally {
+    TEAMS[TEAM].score = originalScore;
+  }
+});
+
+test("computeTrophyFinalsMVP skips a deactivated player on the champion roster", () => {
+  const roster = [makePlayer("Sat Out", "A", 95, { star: 1 }), makePlayer("Played", "M", 60)];
+  withFreshRoster(TEAM, roster, () => {
+    const mvp = computeTrophyFinalsMVP({ champion: TEAM }, { [TEAM]: ["Sat Out"] });
+    assert.equal(mvp.name, "Played");
+  });
+});
+
+test("computeAllVPLLTeams and computeAllRookieTeam exclude deactivated players from consideration", () => {
+  withControlledLeague({}, () => {
+    // Deactivate one of BLAND_ROSTER's own goalies so the position must be filled by
+    // whatever real fallback exists — the deactivated name should never appear.
+    const deactivated = { [TEAM_NAMES[0]]: ["Filler 10"] }; // index 10 is the "G" entry in BLAND_ROSTER
+    const { firstTeam } = computeAllVPLLTeams(deactivated);
+    const names = firstTeam.map((p) => `${p.team} ${p.name}`);
+    assert.ok(!names.includes(`${TEAM_NAMES[0]} Filler 10`));
+  });
+});

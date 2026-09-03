@@ -63,14 +63,38 @@ export function pickMotivation(tier) {
 }
 
 // ---------- §4 Additional Signing Influences ----------
-// Homegrown bonus (spec §4) is NOT implemented: it depends on a hometown-matches-team
-// signal the spec assumes is "recoverable/inferable at free agency time," but that
-// data doesn't exist anywhere in the engine — Master File 9.3 describes a hometown
-// system, but no player tuple field, generation code, or team lookup for it was ever
-// built (confirmed by search, not an oversight in this pass). Building it is a real,
-// separate subsystem (an assignment step at player generation, weighted by market
-// size per 9.3) — out of scope for a free-agency-mechanics pass. Flagging rather than
-// faking it with something that isn't actually the described mechanic.
+// Homegrown bonus (spec §4, Master File 9.3) — now real, now that src/engine/hometown.js
+// exists and every player tuple carries a permanent hometown at index 13. A player
+// re-signing with, or signing with, their own hometown team gets a modest bump — a
+// "local hero" narrative made mechanical, not just flavor text — on top of whatever
+// their motivation type already contributes. Deliberately modest: this is a nudge, not
+// a guarantee, matching how every other bonus term in this module behaves.
+const HOMEGROWN_RESIGN_BONUS = 0.08;
+const HOMEGROWN_NEED_BONUS = 14; // added to a hometown team's needScore in rankTeamsForPlayer
+
+function isHometown(player, team) {
+  return player[13] === team;
+}
+
+// ---------- §6 Indoor Specialist Market (Master File 9.8) ----------
+// Standing in for the doc's literal "20% turnover allowance" — no such hard cap exists
+// anywhere else in this engine's free agency, and the Culkin roster carryover is
+// already an abstraction rather than a literal roster mutation (see CLAUDE.md). What's
+// real and already in the data: a team's own Indoor/Outdoor Balance rating (team.bal)
+// and a player's own (tuple index 7) — same 1-10 scale, same semantics as the field
+// deactivation.js already uses to pick indoor/outdoor misfits. An indoor-leaning team
+// (bal above the 5 midpoint) chases indoor-leaning specialists harder, and the mirror
+// for outdoor; a team or player near the neutral midpoint gets no bonus either way —
+// this only kicks in for genuine specialists on both sides of the match.
+function indoorSpecialistBonus(player, team) {
+  const teamBal = TEAMS[team]?.bal;
+  const playerBal = player[7];
+  if (teamBal == null || playerBal == null) return 0;
+  const teamLean = teamBal - 5;
+  const playerLean = playerBal - 5;
+  if (teamLean === 0 || playerLean === 0 || Math.sign(teamLean) !== Math.sign(playerLean)) return 0;
+  return Math.min(Math.abs(teamLean), Math.abs(playerLean)) * 4;
+}
 
 // Coach-fit bump/penalty reuses the exact same HC_TAG_FIT lookup identifyUnhappyStars()
 // (trades.js) already uses for trade-demand detection, rather than duplicating the check.
@@ -90,7 +114,7 @@ export function projectedCapFine(team, additionalAAV) {
 // full salary-band logic just to project one number isn't worth it. The player's
 // outgoing AAV (driven by the same overall/age/leadership inputs) is a reasonable
 // stand-in for what the new one will land near.
-export function reSignChance(motivation, team, standingsMap, projectedAAV) {
+export function reSignChance(motivation, team, standingsMap, projectedAAV, player) {
   let chance;
   if (motivation === "Loyalist") chance = 0.85;
   else if (motivation === "Mercenary") chance = 0.30;
@@ -99,6 +123,8 @@ export function reSignChance(motivation, team, standingsMap, projectedAAV) {
   const fit = coachFitsTeam(team);
   if (fit === false) chance -= 0.12;
   else if (fit === true) chance += 0.05; // a real fit is a smaller, quieter bump than a mismatch's penalty
+
+  if (player && isHometown(player, team)) chance += HOMEGROWN_RESIGN_BONUS; // §4 homegrown bonus
 
   // Re-sign reluctance scales with *projected* cap position, not just current room —
   // a re-sign that would push the team into a worse fine tier gets meaningfully less
@@ -113,13 +139,18 @@ export function reSignChance(motivation, team, standingsMap, projectedAAV) {
   return clamp(chance, 0.03, 0.97);
 }
 
+// Decreasing per-round chance for the top 3 ranked contenders (§7, main loop below).
+const BIDDING_ROUND_CHANCES = [0.35, 0.25, 0.15];
+
 function rankTeamsForPlayer(player, motivation, standingsMap, mercenaryWeight) {
   const pos = player[1];
   const scarceMult = SCARCE_NEED_MULTIPLIER[pos] || 1.0;
   const candidates = TEAM_NAMES.map((t) => {
     const room = SALARY_CAP - teamPayroll(t);
     const posAvg = avgOverallByPosition(t)[pos];
-    const needScore = (posAvg == null ? 60 : Math.max(0, 100 - posAvg)) * scarceMult;
+    let needScore = (posAvg == null ? 60 : Math.max(0, 100 - posAvg)) * scarceMult;
+    needScore += indoorSpecialistBonus(player, t);
+    if (isHometown(player, t)) needScore += HOMEGROWN_NEED_BONUS;
     return { t, room, needScore, points: standingsMap[t]?.points || 0 };
   }).filter((x) => x.room > 8000);
 
@@ -163,7 +194,7 @@ export function runFreeAgency(standingsMap) {
       if (yearsLeft > 0) { p[10] = yearsLeft; continue; }
       const tier = freeAgentTier(p);
       const motivation = pickMotivation(tier);
-      if (Math.random() < reSignChance(motivation, team, standingsMap, p[9] || 0)) {
+      if (Math.random() < reSignChance(motivation, team, standingsMap, p[9] || 0, p)) {
         assignNewContract(p);
         reSigned.push({ team, name: p[0], ovr: p[4], aav: p[9], motivation, tier });
       } else {
@@ -187,13 +218,24 @@ export function runFreeAgency(standingsMap) {
   for (const entry of candidates) {
     const teamsRanked = rankTeamsForPlayer(entry.player, entry.motivation, standingsMap, mercenaryWeight)
       .filter((x) => PLAYERS_RAW[x.t].length < DRAFT_ROSTER_CAP);
-    if (teamsRanked.length && Math.random() < 0.6) {
-      const dest = teamsRanked[0].t;
+    // §7 Real multi-team bidding — up to the top BIDDING_ROUND_CHANCES.length ranked
+    // contenders each get an independent, decreasing-probability shot in rank order
+    // (the best-fit team goes first and is most likely, but isn't a guarantee; a
+    // player can and does end up with its second or third choice). Round chances are
+    // tuned so the *combined* signing probability across all rounds lands close to the
+    // old flat single-roll 0.6 rather than inflating overall free-agent movement.
+    let dest = null;
+    const runnersUp = [];
+    for (let i = 0; i < teamsRanked.length && i < BIDDING_ROUND_CHANCES.length; i++) {
+      if (Math.random() < BIDDING_ROUND_CHANCES[i]) { dest = teamsRanked[i].t; break; }
+      runnersUp.push(teamsRanked[i].t);
+    }
+    if (dest) {
       assignNewContract(entry.player);
       PLAYERS_RAW[dest].push(entry.player);
       signed.push({
         team: dest, name: entry.player[0], ovr: entry.player[4], from: entry.fromTeam || "Player Pool",
-        aav: entry.player[9], motivation: entry.motivation, tier: entry.tier,
+        aav: entry.player[9], motivation: entry.motivation, tier: entry.tier, runnersUp,
       });
     } else {
       if (entry.fromTeam) departed.push({ team: entry.fromTeam, name: entry.player[0], ovr: entry.player[4] });
