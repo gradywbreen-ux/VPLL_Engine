@@ -1,60 +1,76 @@
-# VPLL Engine — Claude Code Migration Starter
+# VPLL Engine
 
-This folder is everything needed to move the VPLL simulation engine from a Claude.ai artifact
-into a real local project with Claude Code.
+A fully mechanized, fictional 32-team professional lacrosse league simulation — the Vermont
+Professional Lacrosse League. Guiding philosophy: "feels like playing a video game and reading
+the newspaper." The Commissioner (you) is a ghost in the machine, watching 32 teams draft, trade,
+sign free agents, and rise and fall over simulated years — not managing one team by hand.
 
-## What's here
+A real Vite + React project: full seasons and playoffs, a salary cap and free agency market, an
+autonomous trade engine, coach firings, a draft lottery, player development, and an AI-written
+Press Box covering it all in-fiction.
+
+## Quick start
 
 ```
-vpll-engine/
-├── CLAUDE.md                    ← read this first — project context, conventions, gotchas
-├── README.md                    ← this file
-├── src/
-│   └── VPLL_Simulator.jsx       ← the entire engine + UI, single file (as exported from Claude.ai)
-└── docs/
-    ├── VPLL_Master_File.md      ← canonical rulebook, source of truth for all lore/rules
-    ├── VPLL_Year1_Rosters.md    ← original Year 1 roster generation output (reference)
-    ├── VPLL_Year1_Coaches.md    ← original Year 1 coaching staff generation output (reference)
-    ├── VPLL_Free_Agent_Pool.md  ← original free agent pool generation output (reference)
-    └── VPLL_Name_Pools.md       ← name pools used for all procedural generation
+npm install
+npm run dev
 ```
 
-## Suggested first session with Claude Code
+Open the printed local URL. That's the whole app — team rosters, schedules, standings, playoffs,
+and the offseason are all generated and simulated client-side; nothing else needs to be running.
 
-1. **Init the repo.**
-   ```
-   cd vpll-engine
-   git init && git add . && git commit -m "Import from Claude.ai artifact"
-   ```
+### Press Box (optional)
 
-2. **Point Claude Code at `CLAUDE.md` and ask it to read `src/VPLL_Simulator.jsx` in full**
-   before doing anything else. It's large — let it actually read the whole thing rather than
-   skimming, since the systems are genuinely interdependent (the offseason steps run in a
-   specific order for a reason; the data mutation gotcha in CLAUDE.md matters).
+Press Box generates recap articles and an offseason "Hot Stove" column via the Anthropic API. It
+needs a small local proxy so the API key never lives in the browser:
 
-3. **Ask for a project scaffold**, something like:
-   > "Set this up as a Vite + React project. Split VPLL_Simulator.jsx into logical modules —
-   > don't change any logic yet, just decompose it. Replace window.storage calls with
-   > localStorage using the same key names. Get it running locally with `npm run dev` before
-   > we change anything else."
+```
+cp .env.example .env        # add your ANTHROPIC_API_KEY
+npm run dev:all             # runs the Vite dev server + the proxy together
+```
 
-4. **Verify parity before building anything new.** Once it runs locally, sanity check that a
-   simulated season still produces sane results (win distribution, standings, playoffs) before
-   trusting the migration. The multi-year stability numbers in CLAUDE.md are a good target to
-   re-validate against.
+Without this running, Press Box fails gracefully into an in-fiction "the presses jammed" error —
+nothing else in the app depends on it.
 
-5. **Decide on Press Box.** Either wire up your own Anthropic API key behind a small local
-   proxy server (ask Claude Code to build one — it's a small task), or temporarily disable the
-   Press Box tab until you're ready to handle key management.
+## Project layout
 
-6. **Set up a real test suite.** The "Testing workflow" section in CLAUDE.md describes the
-   manual process used throughout development. Ask Claude Code to formalize it into actual
-   `npm test` coverage — especially the multi-year parity/stability check and the roster
-   integrity check (no duplicate players, no lost players after trades).
+```
+src/
+  data/       embedded league data (32 teams, 800 players, 96 coaches), reset-to-Year-1,
+              the persistent player pool, and the one-time LSM position migration
+  engine/     one module per subsystem — contracts, draft, trades, free agency, playoffs,
+              progression, coaching, retirement, roster caps, simulation math, etc.
+  pressbox/   prompt builders for the AI-written recap / Hot Stove / weekly-review articles
+  components/ presentational React pieces (standings tables, box scores, team logos, ...)
+  styles/     the CSS-in-JS design system
+  App.jsx     the main component — Exhibition / Season / Playoffs / Standings / Offseason /
+              Press Box tabs, wired to everything in src/engine and src/data
+scripts/      headless multi-year league simulation harness + a CLI benchmark report
+server/       the minimal Node proxy Press Box talks to (keeps the API key server-side)
+test/         automated test suite (Node's built-in test runner)
+docs/         VPLL_Master_File.md — the canonical rulebook this engine implements — plus
+              design specs for individual subsystems
+```
 
-## A note on scope
+## Testing
 
-This is a big, deep project — 6 build phases, an economic simulation with contracts/cap/trades,
-an offseason pipeline, and a narrative layer, all built incrementally over many sessions. Don't
-expect (or ask for) a rewrite in one sitting. Decomposing the file safely and getting it running
-locally is a full, worthwhile first milestone on its own.
+```
+npm test                    # automated suite — data integrity, draft lottery odds, roster
+                             #   caps/floor, the player pool, free agency tiers, playoff
+                             #   tiebreakers, and a multi-year parity/stability check
+npm run lint                # ESLint
+npm run build               # production build
+npm run simulate:years [n]  # headless N-year benchmark (default 16) — rating spread, coach
+                             #   firing rate, champion diversity, roster integrity
+```
+
+All four run in CI (`.github/workflows/ci.yml`) on every push and pull request.
+
+## Where to go next
+
+- **`CLAUDE.md`** — the real depth: architectural gotchas, the player data format, the
+  roster→rating feedback loop, parity tuning, and everything else worth knowing before changing
+  this codebase. Read this before making non-trivial changes.
+- **`docs/VPLL_Master_File.md`** — the canonical in-fiction rulebook (league structure, scoring,
+  roster tags, cap rules, playoff structure, coaching archetypes) that the engine is built to
+  match. When in doubt about what should happen, check here first.
