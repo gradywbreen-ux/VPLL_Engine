@@ -47,36 +47,56 @@ loadDotEnv(ENV_PATH);
 const PORT = process.env.PRESS_BOX_PROXY_PORT || 8787;
 const ANTHROPIC_MODEL = "claude-sonnet-5"; // was "claude-sonnet-4-6" client-side — not a real model ID, fixed here
 const MAX_TOKENS = 1000;
+const MAX_BODY_BYTES = 64 * 1024; // article prompts are natural-language text, not large payloads
 
-function sendJson(res, status, body) {
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*", // local-only tool; permissive is fine
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
+// This proxy holds a real Anthropic API key — CORS has to actually restrict who can call it,
+// not just document an assumption. "Access-Control-Allow-Origin: *" would let ANY webpage open
+// in the same browser silently call this proxy (and read the response) while it's running,
+// spending the developer's own API credits on attacker-controlled prompts — a real CSRF-style
+// abuse path, not a theoretical one, since a local dev server is a same-machine, no-auth target.
+// Only ever reflect back an Origin that's actually loopback (any port — the Vite dev port isn't
+// fixed), never "*"; a request from anywhere else gets no CORS header at all, so the browser
+// blocks the page from reading the response even if the request itself reaches the server.
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+  const headers = { "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
+  if (origin && LOOPBACK_ORIGIN.test(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+
+function sendJson(req, res, status, body) {
+  res.writeHead(status, { "Content-Type": "application/json", ...corsHeaders(req) });
   res.end(JSON.stringify(body));
 }
 
 async function handleGenerateArticle(req, res) {
   let raw = "";
-  for await (const chunk of req) raw += chunk;
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > MAX_BODY_BYTES) {
+      sendJson(req, res, 413, { error: "Request body too large" });
+      req.destroy();
+      return;
+    }
+  }
 
   let prompt;
   try {
     ({ prompt } = JSON.parse(raw));
   } catch {
-    sendJson(res, 400, { error: "Request body must be valid JSON" });
+    sendJson(req, res, 400, { error: "Request body must be valid JSON" });
     return;
   }
   if (!prompt || typeof prompt !== "string") {
-    sendJson(res, 400, { error: "Missing 'prompt' string in request body" });
+    sendJson(req, res, 400, { error: "Missing 'prompt' string in request body" });
     return;
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    sendJson(res, 500, {
+    sendJson(req, res, 500, {
       error: "Server is missing ANTHROPIC_API_KEY. Copy .env.example to .env and add your key, then restart the proxy.",
     });
     return;
@@ -97,19 +117,15 @@ async function handleGenerateArticle(req, res) {
       }),
     });
     const data = await upstream.json();
-    sendJson(res, upstream.status, data);
+    sendJson(req, res, upstream.status, data);
   } catch (err) {
-    sendJson(res, 502, { error: `Couldn't reach api.anthropic.com: ${err.message}` });
+    sendJson(req, res, 502, { error: `Couldn't reach api.anthropic.com: ${err.message}` });
   }
 }
 
 const server = createServer((req, res) => {
   if (req.method === "OPTIONS") {
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    });
+    res.writeHead(204, corsHeaders(req));
     res.end();
     return;
   }
@@ -117,10 +133,15 @@ const server = createServer((req, res) => {
     handleGenerateArticle(req, res);
     return;
   }
-  sendJson(res, 404, { error: "Not found" });
+  sendJson(req, res, 404, { error: "Not found" });
 });
 
-server.listen(PORT, () => {
+// Explicit loopback bind — Node's default (no host argument) listens on every network
+// interface, which would make this API-key-backed proxy reachable from other devices on
+// the same network (or, in a misconfigured/firewalled environment, further than that),
+// not just this machine, despite every log line and doc comment here describing it as
+// "local-only."
+server.listen(PORT, "127.0.0.1", () => {
   const keyStatus = process.env.ANTHROPIC_API_KEY ? "found" : "MISSING — see .env.example";
   console.log(`Press Box proxy listening on http://localhost:${PORT}  (ANTHROPIC_API_KEY: ${keyStatus})`);
 });

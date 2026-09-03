@@ -144,7 +144,15 @@ Current module layout:
   `api.js` (`fetchArticle`, still calling `api.anthropic.com` directly with no key — see "What
   has to change" below, unresolved)
 - `src/components/` — `RatingBar`, `TeamCard`, `BoxScore`, `PlayoffRound`, `StandingsTable`,
-  `Article`, `CombinedCupTable`
+  `Article`, `CombinedCupTable`, `ErrorBoundary` (task #49 — a class component, the only kind
+  that can implement `getDerivedStateFromError`/`componentDidCatch`; wraps `<App/>` in
+  `main.jsx`, outside everything else, so it still renders correctly even if the crash happened
+  before `<style>{STYLES}</style>` ever mounted — every color/font in its fallback UI is inlined
+  rather than relying on `.vpll-root`'s CSS variables or the Google Fonts import. Before this, any
+  render-time exception anywhere in the tree took the whole app to a blank white screen with no
+  recovery path. The fallback offers Reload and a "Clear saved data & reload" action — the same
+  storage keys `resetLeagueToYear1` already deletes — for the specific case of a crash caused by
+  corrupted local save data, where a plain reload would just crash again)
 - `src/styles/styles.js` — the CSS-in-JS design system
 - `src/storage.js` — localStorage-backed replacement for `window.storage`, same key names
 - `src/App.jsx` — the main component (tabs: Exhibition, Season, Playoffs, Standings, Offseason,
@@ -347,10 +355,19 @@ Two things only ever worked inside the Claude.ai artifact sandbox. Both are now 
    is a minimal, dependency-free local proxy (plain `node:http`) that holds the real API key
    server-side (via a gitignored `.env` — copy `.env.example` to get started) and forwards
    `{prompt}` to the real Messages API. Vite's dev server proxies `/api/*` to it (see
-   `vite.config.js`), so there's no CORS to configure. Run it with `npm run server` alongside
-   `npm run dev`, or both at once with `npm run dev:all`. Without it running, Press Box fails
-   gracefully into the existing "the presses jammed" error banner — same as any other article
-   generation failure, not a crash.
+   `vite.config.js`) for the normal same-origin dev workflow. Run it with `npm run server`
+   alongside `npm run dev`, or both at once with `npm run dev:all`. Without it running, Press
+   Box fails gracefully into the existing "the presses jammed" error banner — same as any other
+   article generation failure, not a crash. Hardened by a security pass (task #47): binds
+   explicitly to `127.0.0.1` (Node's default with no host argument listens on every network
+   interface, not just this machine, despite the "local-only" framing), only ever reflects back
+   an `Access-Control-Allow-Origin` for a request whose `Origin` header is itself loopback —
+   never `*` — so a malicious page open in the same browser can't silently ride this proxy to
+   spend the developer's own API credits and read the response, and caps the request body at
+   64KB against unbounded-memory-buffering abuse. `npm run simulate:years`'s benchmark and
+   `npm audit` (0 vulnerabilities as of this pass) don't cover this file at all since it's
+   outside the headless engine — verified by hand instead (build/lint/test plus manual `curl`
+   checks against all three fixes).
 
    Along the way, fixed `model: "claude-sonnet-4-6"` — a stale, invalid model ID that had been
    sitting in this code since the original artifact export and would have failed every request
