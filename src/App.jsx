@@ -21,6 +21,7 @@ import { applyLeagueProgression } from "./engine/progression.js";
 import { buildDraftOrder, generateProspect } from "./engine/draft.js";
 import {
   cutRosterToSize, ensureFloorBeforeRemoval, maintainPlayerPool,
+  manualCutPlayer, manualSignFromPool,
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE,
 } from "./engine/roster.js";
 import { evaluateFiring, generateFreshCoach } from "./engine/coaching.js";
@@ -567,6 +568,43 @@ export default function VPLLSimulator() {
       setManualTradeMsg("That trade couldn't be completed.");
     }
   }, [manualTeamA, manualTeamB, manualPlayerA, manualPlayerB]);
+
+  /* ---------- Manual roster moves (cut / sign, task #50) ---------- */
+  const [manualCutTeam, setManualCutTeam] = useState(TEAM_NAMES[0]);
+  const [manualCutPlayerName, setManualCutPlayerName] = useState("");
+  const [manualCutMsg, setManualCutMsg] = useState(null);
+  const [manualSignTeam, setManualSignTeam] = useState(TEAM_NAMES[0]);
+  const [manualSignPlayerId, setManualSignPlayerId] = useState("");
+  const [manualSignMsg, setManualSignMsg] = useState(null);
+
+  const executeManualCut = useCallback(async () => {
+    const roster = PLAYERS_RAW[manualCutTeam];
+    const player = roster.find((p) => p[0] === manualCutPlayerName);
+    if (!player) { setManualCutMsg("Pick a player to release first."); return; }
+    const result = manualCutPlayer(manualCutTeam, player);
+    if (result.ok) {
+      setManualCutMsg(`Released ${player[0]} to the Player Pool.`);
+      setManualCutPlayerName("");
+      setDataVersion((v) => v + 1);
+      await persistLeagueData();
+    } else {
+      setManualCutMsg(result.reason);
+    }
+  }, [manualCutTeam, manualCutPlayerName]);
+
+  const executeManualSign = useCallback(async () => {
+    const player = PLAYER_POOL.find((p) => p[14] === manualSignPlayerId);
+    if (!player) { setManualSignMsg("Pick a player from the pool first."); return; }
+    const result = manualSignFromPool(manualSignTeam, player, DRAFT_ROSTER_CAP);
+    if (result.ok) {
+      setManualSignMsg(`Signed ${player[0]} to ${manualSignTeam}.`);
+      setManualSignPlayerId("");
+      setDataVersion((v) => v + 1);
+      await persistLeagueData();
+    } else {
+      setManualSignMsg(result.reason);
+    }
+  }, [manualSignTeam, manualSignPlayerId]);
 
   const runCoachingStep = useCallback(async () => {
     setOffseasonBusy(true);
@@ -1663,6 +1701,48 @@ export default function VPLLSimulator() {
                   <div className="vpll-controls-row">
                     <button className="vpll-btn secondary" onClick={executeManualTrade} disabled={!manualPlayerA || !manualPlayerB}>Execute Trade</button>
                     {manualTradeMsg && <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "var(--ink-soft)" }}>{manualTradeMsg}</span>}
+                  </div>
+                </div>
+
+                {/* Manual Roster Moves — cut/sign, task #50 */}
+                <div className="vpll-week-block">
+                  <div className="vpll-week-label">Commissioner's Roster Moves</div>
+                  <div className="vpll-info-banner">
+                    Release a rostered player to the Player Pool, or sign a pool player onto a
+                    roster — the same floor/cap rules the autonomous engine follows apply here
+                    too, so a move that would leave a team short-handed is refused, not forced.
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 10 }}>
+                    <div>
+                      <div className="vpll-progress-label" style={{ margin: "0 0 6px" }}>Release to Pool</div>
+                      <div className="vpll-team-name-row" style={{ marginBottom: 6 }}><TeamLogo teamName={manualCutTeam} size={24} /></div>
+                      <select className="vpll-select" value={manualCutTeam} onChange={(e) => { setManualCutTeam(e.target.value); setManualCutPlayerName(""); }}>
+                        {TEAM_NAMES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <select className="vpll-select" style={{ marginTop: 6 }} value={manualCutPlayerName} onChange={(e) => setManualCutPlayerName(e.target.value)}>
+                        <option value="">Select player…</option>
+                        {PLAYERS_RAW[manualCutTeam].map((p) => <option key={p[0]} value={p[0]}>{p[0]} ({POS_NAME[p[1]]}, OVR {p[4]})</option>)}
+                      </select>
+                      <div className="vpll-controls-row" style={{ marginTop: 8 }}>
+                        <button className="vpll-btn secondary" onClick={executeManualCut} disabled={!manualCutPlayerName}>Release Player</button>
+                      </div>
+                      {manualCutMsg && <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "var(--ink-soft)" }}>{manualCutMsg}</span>}
+                    </div>
+                    <div>
+                      <div className="vpll-progress-label" style={{ margin: "0 0 6px" }}>Sign from Pool</div>
+                      <div className="vpll-team-name-row" style={{ marginBottom: 6 }}><TeamLogo teamName={manualSignTeam} size={24} /></div>
+                      <select className="vpll-select" value={manualSignTeam} onChange={(e) => setManualSignTeam(e.target.value)}>
+                        {TEAM_NAMES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <select className="vpll-select" style={{ marginTop: 6 }} value={manualSignPlayerId} onChange={(e) => setManualSignPlayerId(e.target.value)}>
+                        <option value="">Select pool player…</option>
+                        {PLAYER_POOL.map((p) => <option key={p[14]} value={p[14]}>{p[0]} ({POS_NAME[p[1]]}, OVR {p[4]})</option>)}
+                      </select>
+                      <div className="vpll-controls-row" style={{ marginTop: 8 }}>
+                        <button className="vpll-btn secondary" onClick={executeManualSign} disabled={!manualSignPlayerId}>Sign Player</button>
+                      </div>
+                      {manualSignMsg && <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "var(--ink-soft)" }}>{manualSignMsg}</span>}
+                    </div>
                   </div>
                 </div>
 

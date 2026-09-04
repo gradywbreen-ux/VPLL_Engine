@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 
 import { PLAYERS_RAW, PLAYER_POOL } from "../src/data/rawData.js";
 import {
-  cutRosterToSize, enforceRosterFloor,
+  cutRosterToSize, enforceRosterFloor, manualCutPlayer, manualSignFromPool,
   DRAFT_ROSTER_CAP, SEASON_ROSTER_CAP, MIN_ROSTER_SIZE, POSITION_MINIMUMS,
 } from "../src/engine/roster.js";
 
@@ -131,5 +131,98 @@ test("a roster already within [MIN_ROSTER_SIZE, SEASON_ROSTER_CAP] and meeting e
     assert.equal(PLAYERS_RAW[TEAM].length, MIN_ROSTER_SIZE);
     cutRosterToSize(TEAM, SEASON_ROSTER_CAP); // no-op, already under the cap
     assert.equal(PLAYERS_RAW[TEAM].length, MIN_ROSTER_SIZE);
+  });
+});
+
+/* ---------- Manual roster moves (task #50) ---------- */
+
+test("manualCutPlayer releases a rostered player into the pool when well above every floor", () => {
+  const roster = Array.from({ length: 26 }, (_, i) => makePlayer(`Mid ${i}`, "M", 60 + i));
+  withFreshRoster(roster, () => {
+    const target = roster[0];
+    const result = manualCutPlayer(TEAM, target);
+    assert.equal(result.ok, true);
+    assert.equal(PLAYERS_RAW[TEAM].length, 25);
+    assert.ok(!PLAYERS_RAW[TEAM].includes(target));
+    assert.ok(PLAYER_POOL.includes(target), "cut player should land in the pool, not vanish");
+  });
+});
+
+test("manualCutPlayer refuses to drop a roster below MIN_ROSTER_SIZE", () => {
+  const roster = [
+    ...Array.from({ length: 3 }, (_, i) => makePlayer(`A${i}`, "A", 65)),
+    ...Array.from({ length: 6 }, (_, i) => makePlayer(`M${i}`, "M", 65)),
+    ...Array.from({ length: 2 }, (_, i) => makePlayer(`L${i}`, "L", 65)),
+    ...Array.from({ length: 4 }, (_, i) => makePlayer(`D${i}`, "D", 65)),
+    makePlayer("F0", "F", 65),
+    ...Array.from({ length: 8 }, (_, i) => makePlayer(`G${i}`, "G", 65)),
+  ]; // exactly MIN_ROSTER_SIZE (24)
+  assert.equal(roster.length, MIN_ROSTER_SIZE);
+  withFreshRoster(roster, () => {
+    const result = manualCutPlayer(TEAM, roster[0]);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /roster floor/);
+    assert.equal(PLAYERS_RAW[TEAM].length, MIN_ROSTER_SIZE, "refused cut should leave the roster untouched");
+  });
+});
+
+test("manualCutPlayer refuses to cut a position below its own minimum even with total headcount to spare", () => {
+  const roster = [
+    ...Array.from({ length: 24 }, (_, i) => makePlayer(`Mid ${i}`, "M", 60)),
+    makePlayer("Only Goalie 1", "G", 55),
+    makePlayer("Only Goalie 2", "G", 55),
+  ]; // 26 total, but goalies sit exactly at POSITION_MINIMUMS.G (2)
+  withFreshRoster(roster, () => {
+    const result = manualCutPlayer(TEAM, roster.find((p) => p[1] === "G"));
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /position/);
+    assert.equal(PLAYERS_RAW[TEAM].filter((p) => p[1] === "G").length, 2);
+  });
+});
+
+test("manualCutPlayer reports failure for a player not on the given roster", () => {
+  const roster = Array.from({ length: 26 }, (_, i) => makePlayer(`Mid ${i}`, "M", 60));
+  withFreshRoster(roster, () => {
+    const stranger = makePlayer("Nobody", "M", 60);
+    const result = manualCutPlayer(TEAM, stranger);
+    assert.equal(result.ok, false);
+    assert.equal(PLAYERS_RAW[TEAM].length, 26);
+  });
+});
+
+test("manualSignFromPool moves a pool player onto the roster under the given cap, with a fresh contract", () => {
+  const roster = Array.from({ length: 26 }, (_, i) => makePlayer(`Mid ${i}`, "M", 60));
+  withFreshRoster(roster, () => {
+    const poolPlayer = makePlayer("Pool Guy", "A", 55);
+    PLAYER_POOL.push(poolPlayer);
+    const result = manualSignFromPool(TEAM, poolPlayer, DRAFT_ROSTER_CAP);
+    assert.equal(result.ok, true);
+    assert.equal(PLAYERS_RAW[TEAM].length, 27);
+    assert.ok(PLAYERS_RAW[TEAM].includes(poolPlayer));
+    assert.ok(!PLAYER_POOL.includes(poolPlayer), "signed player should leave the pool");
+    assert.ok(poolPlayer[9] > 0 && poolPlayer[10] > 0, "should be given a real contract, not left with none");
+  });
+});
+
+test("manualSignFromPool refuses to exceed the given roster cap", () => {
+  const roster = Array.from({ length: DRAFT_ROSTER_CAP }, (_, i) => makePlayer(`Mid ${i}`, "M", 60));
+  withFreshRoster(roster, () => {
+    const poolPlayer = makePlayer("Pool Guy", "A", 55);
+    PLAYER_POOL.push(poolPlayer);
+    const result = manualSignFromPool(TEAM, poolPlayer, DRAFT_ROSTER_CAP);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /cap/);
+    assert.equal(PLAYERS_RAW[TEAM].length, DRAFT_ROSTER_CAP, "refused sign should leave the roster untouched");
+    assert.ok(PLAYER_POOL.includes(poolPlayer), "refused sign should leave the pool untouched too");
+  });
+});
+
+test("manualSignFromPool reports failure for a player not actually in the pool", () => {
+  const roster = Array.from({ length: 26 }, (_, i) => makePlayer(`Mid ${i}`, "M", 60));
+  withFreshRoster(roster, () => {
+    const notInPool = makePlayer("Ghost", "A", 55);
+    const result = manualSignFromPool(TEAM, notInPool, DRAFT_ROSTER_CAP);
+    assert.equal(result.ok, false);
+    assert.equal(PLAYERS_RAW[TEAM].length, 26);
   });
 });

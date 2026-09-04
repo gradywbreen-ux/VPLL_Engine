@@ -170,6 +170,53 @@ export function ensureFloorBeforeRemoval(teamName, vacatingPos, usedNames) {
   return { team: teamName, name: player[0], pos: player[1], ovr: player[4], source };
 }
 
+// Manual roster moves (task #50) — the Commissioner releasing or claiming a
+// specific player by hand, alongside the autonomous Draft/Free Agency/Trades
+// steps rather than instead of them. Both live in the same offseason window
+// as the Manual Trade Override (after Trades, before Progression), so the
+// active ceiling is DRAFT_ROSTER_CAP — the training-camp cut to
+// SEASON_ROSTER_CAP hasn't happened yet at that point in the flow. Neither
+// function throws; both return {ok, reason} so the UI can explain a refusal
+// rather than silently no-op or crash, and both respect the same
+// POSITION_MINIMUMS/MIN_ROSTER_SIZE invariants the autonomous cut/floor paths
+// already enforce, so a manual move can never leave a roster in a state the
+// rest of the engine wouldn't otherwise allow.
+export function manualCutPlayer(teamName, player) {
+  const roster = PLAYERS_RAW[teamName];
+  const idx = roster.indexOf(player);
+  if (idx === -1) return { ok: false, reason: "That player isn't on this roster." };
+  if (roster.length <= MIN_ROSTER_SIZE) {
+    return { ok: false, reason: `${teamName} is already at the ${MIN_ROSTER_SIZE}-player roster floor — release someone else first, or claim a replacement before cutting.` };
+  }
+  const pos = player[1];
+  const posFloor = POSITION_MINIMUMS[pos] || 0;
+  const posCount = roster.filter((p) => p[1] === pos).length;
+  if (posCount <= posFloor) {
+    return { ok: false, reason: `Cutting ${player[0]} would drop ${teamName} below the ${posFloor}-player minimum at that position.` };
+  }
+  roster.splice(idx, 1);
+  PLAYER_POOL.push(player);
+  return { ok: true };
+}
+
+// Signs a specific pool player onto a specific roster, capped at maxSize
+// (the caller passes DRAFT_ROSTER_CAP for the offseason window this ships
+// in). Gives the player a fresh journeyman-tier contract, same as any other
+// pool claim (claimOrGenerate) — a manual pickup off the pool isn't a
+// marquee market signing.
+export function manualSignFromPool(teamName, player, maxSize) {
+  const roster = PLAYERS_RAW[teamName];
+  const poolIdx = PLAYER_POOL.indexOf(player);
+  if (poolIdx === -1) return { ok: false, reason: "That player isn't in the Player Pool." };
+  if (roster.length >= maxSize) {
+    return { ok: false, reason: `${teamName} is already at the ${maxSize}-player roster cap.` };
+  }
+  PLAYER_POOL.splice(poolIdx, 1);
+  assignNewContract(player, CONTRACT_TYPES.JOURNEYMAN);
+  roster.push(player);
+  return { ok: true };
+}
+
 // Once-a-year pool upkeep (call alongside the season roster cut): pool
 // players age like everyone else, retire out of the pool on the same rules
 // as rostered veterans, and an unclaimed pool is trimmed back to

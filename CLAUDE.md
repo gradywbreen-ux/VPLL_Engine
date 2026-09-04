@@ -6,8 +6,8 @@ A fully mechanized, fictional 32-team professional lacrosse league simulation. G
 philosophy: "feels like playing a video game and reading the newspaper." The Commissioner
 (the user) is a "ghost in the machine" — an observer watching 32 teams rise and fall
 autonomously, not a GM managing one team. Nearly everything should run itself; the user
-occasionally intervenes (e.g. the manual trade override) but the default mode is watching,
-not managing.
+occasionally intervenes (e.g. the manual trade override, plus manual cut/sign — see task #50
+below) but the default mode is watching, not managing.
 
 **Source of truth for lore/rules:** `docs/VPLL_Master_File.md`. This is the canonical rulebook
 — league structure, scoring formula, roster tags, cap rules, playoff structure, coaching
@@ -53,7 +53,20 @@ Current module layout:
   below the floor even for one offseason tick — `enforceRosterFloor()` is the belt-and-suspenders
   safety net after that. `maintainPlayerPool()` ages pool players a year, retires eligible
   veterans out of it on the same rules as rostered players, and trims each position back to
-  `MAX_POOL_PER_POSITION` so an unclaimed pool can't grow forever), `freeAgency` (Master File
+  `MAX_POOL_PER_POSITION` so an unclaimed pool can't grow forever. `manualCutPlayer()`/
+  `manualSignFromPool()` (task #50) are the Commissioner's manual roster moves — release a
+  specific rostered player to the pool, or claim a specific pool player onto a roster, both
+  living in the Offseason tab's "Commissioner's Roster Moves" block right next to the existing
+  Manual Trade Override, in the same window between the Trades step and Progression. Confirmed
+  with the Commissioner as in-scope (not a "ghost in the machine" violation — an explicit,
+  occasional intervention alongside the trade override, not a full always-on roster browser).
+  Neither throws; both return `{ok, reason}` so the UI can explain a refusal, and both enforce
+  the exact same invariants the autonomous paths do — a cut is refused if it would drop a
+  position below `POSITION_MINIMUMS` or the roster below `MIN_ROSTER_SIZE`, a sign is refused
+  above `DRAFT_ROSTER_CAP` (the active ceiling at that point in the offseason flow, before the
+  training-camp cut to `SEASON_ROSTER_CAP` happens at year-start) — so a manual move can never
+  leave a roster in a state the rest of the engine wouldn't otherwise allow. A manual sign gives
+  the player a fresh journeyman-tier contract, same as any other pool claim), `freeAgency` (Master File
   9.4/9.5, extended per `docs/VPLL_Free_Agency_Tiers_Spec.md`: `freeAgentTier()` buckets a
   player 1-4 — Franchise/Quality Starter/Rotational/Journeyman — from *current* overall + star
   flag each time it's needed, never stored on the player; a smaller multiplier on the effective
@@ -309,7 +322,11 @@ real automated suite instead of the fully-manual process this section used to de
   per-rank probabilities, plus structural invariants on pool size/order), `roster-caps.test.js`
   (hand-built rosters proving the 32/28/24 cap-cut-floor rules and the per-position minimums,
   including that a cut never drops a position below its floor and a floor top-up never ignores a
-  position shortfall just because the total count is already fine), `player-pool.test.js`
+  position shortfall just because the total count is already fine, plus `manualCutPlayer()`/
+  `manualSignFromPool()` — a manual cut/sign succeeds when well clear of every floor/cap, is
+  refused (with the roster/pool left untouched) at the roster floor, at a position's own
+  minimum, and at the roster cap, and a manual sign leaves the player with a real contract),
+  `player-pool.test.js`
   (the persistent waiver pool: cuts feed it instead of vanishing, claims prefer a real pool player
   over generating a fresh one, a claim for a specific position never silently substitutes the
   wrong one, the roster never dips below the floor even momentarily across a chain of
