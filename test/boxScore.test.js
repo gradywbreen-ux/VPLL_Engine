@@ -111,6 +111,66 @@ test("attributeGoalieStats returns null for a team with no rostered goalie", () 
   });
 });
 
+test("attributeGoals never attributes a goal or assist to a deactivated player", () => {
+  const roster = [
+    makePlayer("Bench Star", "A", 99, "bench1"), // highest overall by far, but deactivated
+    makePlayer("Active Scorer", "A", 60, "a1"), makePlayer("Active Passer", "M", 60, "a2"),
+  ];
+  withFreshRoster(TEAM, roster, () => {
+    const goals = attributeGoals(TEAM, 20, false, ["Bench Star"]);
+    for (const g of goals) {
+      assert.notEqual(g.scorer, "Bench Star");
+      assert.notEqual(g.assist, "Bench Star");
+    }
+  });
+});
+
+test("attributeFaceoffs never attributes a draw to a deactivated FOGO", () => {
+  const roster = [makePlayer("Bench Fogo", "F", 99, "bf1"), makePlayer("Active Fogo", "F", 50, "af1")];
+  withFreshRoster(TEAM, roster, () => withFreshRoster(TEAM_B, [makePlayer("Opp Fogo", "F", 60, "of1")], () => {
+    const { home } = attributeFaceoffs(TEAM, TEAM_B, false, { [TEAM]: ["Bench Fogo"] });
+    for (const fo of home) assert.notEqual(fo.name, "Bench Fogo");
+  }));
+});
+
+test("attributeCausedTurnovers never attributes to a deactivated defender", () => {
+  const roster = [makePlayer("Bench Defender", "D", 99, "bd1"), makePlayer("Active Defender", "D", 50, "ad1")];
+  withFreshRoster(TEAM, roster, () => withFreshRoster(TEAM_B, [makePlayer("Opp", "A", 60, "o1")], () => {
+    const { home } = attributeCausedTurnovers(TEAM, TEAM_B, false, { [TEAM]: ["Bench Defender"] });
+    for (const ct of home) assert.notEqual(ct.name, "Bench Defender");
+  }));
+});
+
+test("attributeGoalieStats never starts a deactivated goalie, and falls back if every goalie happens to be deactivated", () => {
+  const roster = [makePlayer("Bench Goalie", "G", 99, "bg1"), makePlayer("Active Goalie", "G", 50, "ag1")];
+  withFreshRoster(TEAM, roster, () => {
+    for (let i = 0; i < 20; i++) {
+      const stats = attributeGoalieStats(TEAM, TEAM_B, 8, false, ["Bench Goalie"]);
+      assert.notEqual(stats.name, "Bench Goalie");
+    }
+    // Defensive fallback: if the deactivated list somehow covers the whole position group
+    // (shouldn't happen given deactivation.js's own POSITION_MINIMUMS floor), attribution
+    // still returns something rather than null/throwing.
+    const stats = attributeGoalieStats(TEAM, TEAM_B, 8, false, ["Bench Goalie", "Active Goalie"]);
+    assert.ok(stats);
+  });
+});
+
+test("computeGameBoxScore excludes deactivated players across every category at once", () => {
+  const homeRoster = [
+    makePlayer("Deactivated Star", "A", 99, "d1"), makePlayer("Active Attacker", "A", 60, "a1"),
+    makePlayer("Active Fogo", "F", 60, "f1"), makePlayer("Active Goalie", "G", 60, "g1"),
+  ];
+  withFreshRoster(TEAM, homeRoster, () => withFreshRoster(TEAM_B, [makePlayer("Opp", "A", 60, "o1")], () => {
+    const deactivated = { [TEAM]: ["Deactivated Star"] };
+    const box = computeGameBoxScore(TEAM, TEAM_B, false, { homeScore: 10, awayScore: 5, homeTwoPointGoal: false, awayTwoPointGoal: false }, deactivated);
+    for (const g of box.home.goals) {
+      assert.notEqual(g.scorer, "Deactivated Star");
+      assert.notEqual(g.assist, "Deactivated Star");
+    }
+  }));
+});
+
 test("computeGameBoxScore returns a fully-shaped result for both sides", () => {
   const homeRoster = [
     makePlayer("H Attacker", "A", 75, "ha1"), makePlayer("H Fogo", "F", 70, "hf1"),

@@ -57,6 +57,15 @@ export default function VPLLSimulator() {
   const [seasons, setSeasons] = useState({ corkum: null, culkin: null }); // each: { schedule, results, playoffs }
   const [activeSeasonType, setActiveSeasonType] = useState("corkum"); // controls Season/Playoffs tab focus
   const [seasonBusy, setSeasonBusy] = useState(false);
+  // Names of players drafted last offseason, now playing their true rookie season — set once
+  // by beginYear2 (before offseason.draft gets reset to null) so awards.js's Rookie of the
+  // Year / All-Rookie Team have a real, explicit signal instead of inferring "rookie" from
+  // contract-year arithmetic. Declared early (not alongside the rest of the offseason state
+  // below) because advancePlayoffRound's useCallback dependency array references it, and a
+  // dependency array is evaluated immediately during render — referencing a not-yet-declared
+  // const anywhere above its own declaration throws a real ReferenceError, not just a stale
+  // closure risk.
+  const [currentRookies, setCurrentRookies] = useState([]);
   const [playoffBusy, setPlayoffBusy] = useState(false);
   const [expandedGameKey, setExpandedGameKey] = useState(null); // composite key: s-{seasonType}-{gameId} or p-{seasonType}-{round}-{gameId}
   const [loaded, setLoaded] = useState(false);
@@ -188,7 +197,7 @@ export default function VPLLSimulator() {
       // Box score attribution happens right here, once, for every game — not lazily on
       // click — so the season's individual leaderboard is guaranteed complete (see
       // src/engine/playerStats.js) and folds straight into CAREER_STATS too.
-      const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res);
+      const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res, season.deactivated);
       accumulateGameStats(newPlayerStats, box, g.home, g.away);
       newResults[g.id] = {
         homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,
@@ -219,7 +228,7 @@ export default function VPLLSimulator() {
         const homeFatigued = (gamesPlayedThisWeek[g.home] || 0) >= 1;
         const awayFatigued = (gamesPlayedThisWeek[g.away] || 0) >= 1;
         const res = simulateGame(g.home, g.away, isIndoorSeason, homeFatigued, awayFatigued);
-        const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res);
+        const box = computeGameBoxScore(g.home, g.away, isIndoorSeason, res, season.deactivated);
         accumulateGameStats(workingPlayerStats, box, g.home, g.away);
         workingResults[g.id] = {
           homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,
@@ -293,9 +302,37 @@ export default function VPLLSimulator() {
     else if (round === "conferenceFinal") simulateConferenceFinalRound(playoffs, table, seasonType === "culkin");
     else if (round === "trophyFinal") simulateTrophyFinalSeries(playoffs);
     const newSeasonObj = { ...season, playoffs };
+
+    // Awards are computed once, right when they become decidable, and frozen onto the
+    // season object from then on — never recomputed live on every render after that.
+    // computeSeasonAwards()/computeDavidsonAward() read the *current* PLAYERS_RAW/TEAMS,
+    // which the Offseason tab's own steps (Draft, Free Agency, Trades, Progression) go on
+    // to mutate before "Begin Year N+1" — recomputing them live would silently show
+    // whatever the roster happens to look like *now* instead of what actually happened
+    // in the season being awarded.
+    if (round === "trophyFinal" && playoffs.champion) {
+      newSeasonObj.awards = computeSeasonAwards(table, playoffs, currentRookies, season.deactivated);
+      // Culkin's Trophy Final always concludes after Corkum's (Culkin can't even start
+      // until Corkum has a champion — see culkinUnlocked), so this is always the moment
+      // both seasons' results are final and the Commissioners Cup champion — and the
+      // Davidson Award — can actually be decided.
+      if (seasonType === "culkin" && seasons.corkum?.playoffs) {
+        const corkumTable = standingsFor.corkum;
+        const corkumPlayoffs = seasons.corkum.playoffs;
+        let cupChampion = null, bestPoints = -Infinity;
+        for (const name of TEAM_NAMES) {
+          const corkumTotal = (corkumTable?.[name]?.points || 0) + (corkumPlayoffs?.ccBonus?.[name] || 0);
+          const culkinTotal = (table?.[name]?.points || 0) + (playoffs?.ccBonus?.[name] || 0);
+          const points = corkumTotal + culkinTotal;
+          if (points > bestPoints) { bestPoints = points; cupChampion = name; }
+        }
+        newSeasonObj.davidsonAward = computeDavidsonAward(cupChampion);
+      }
+    }
+
     await persistSeasons({ ...seasons, [seasonType]: newSeasonObj });
     setPlayoffBusy(false);
-  }, [seasons, standingsFor, persistSeasons]);
+  }, [seasons, standingsFor, persistSeasons, currentRookies]);
 
   function nextPlayoffRoundFor(seasonType) {
     const season = seasons[seasonType];
@@ -421,11 +458,6 @@ export default function VPLLSimulator() {
   const [yearNumber, setYearNumber] = useState(1);
   const [offseason, setOffseason] = useState({ draft: null, coaching: null, retirement: null, progression: null, freeAgency: null, trades: null });
   const [yearHistory, setYearHistory] = useState([]); // archived summaries of completed years
-  // Names of players drafted last offseason, now playing their true rookie season — set once
-  // by beginYear2 (before offseason.draft gets reset to null) so awards.js's Rookie of the
-  // Year / All-Rookie Team have a real, explicit signal instead of inferring "rookie" from
-  // contract-year arithmetic.
-  const [currentRookies, setCurrentRookies] = useState([]);
   const [dataVersion, setDataVersion] = useState(0); // bump to force re-render after mutating TEAMS/COACHES/PLAYERS_RAW
   const [offseasonBusy, setOffseasonBusy] = useState(false);
 
@@ -880,10 +912,15 @@ export default function VPLLSimulator() {
     setPressError(null);
     try {
       const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0]?.team;
+      // Read the frozen snapshots advancePlayoffRound() stored when each Trophy Final
+      // concluded — never recompute live here. By the time Hot Stove is generated the
+      // offseason may already have run (draft picks added, players traded/released,
+      // ratings progressed), and computeSeasonAwards()/computeDavidsonAward() read the
+      // *current* roster, so a live call here would silently show the wrong thing.
       const awards = {
-        corkum: seasons.corkum?.playoffs ? computeSeasonAwards(standingsFor.corkum, seasons.corkum.playoffs, currentRookies, seasons.corkum.deactivated) : null,
-        culkin: seasons.culkin?.playoffs ? computeSeasonAwards(standingsFor.culkin, seasons.culkin.playoffs, currentRookies, seasons.culkin.deactivated) : null,
-        davidson: computeDavidsonAward(cupChampion),
+        corkum: seasons.corkum?.awards || null,
+        culkin: seasons.culkin?.awards || null,
+        davidson: seasons.culkin?.davidsonAward || null,
       };
       const prompt = buildHotStovePrompt({
         yearNum: yearNumber,
@@ -899,7 +936,7 @@ export default function VPLLSimulator() {
       setPressError("The presses jammed — the column couldn't be generated. Try again.");
     }
     setPressGenerating(false);
-  }, [yearNumber, seasons, offseason, combinedCupStandings, standingsFor, currentRookies, saveToArchive]);
+  }, [yearNumber, seasons, offseason, combinedCupStandings, saveToArchive]);
 
   const generateExhibitionRecap = useCallback(async () => {
     if (!lastResult) return;
@@ -1175,8 +1212,12 @@ export default function VPLLSimulator() {
                     ))}
                   </div>
                 )}
-                {seasons[activeSeasonType].playoffs.champion && (() => {
-                  const awards = computeSeasonAwards(standingsFor[activeSeasonType], seasons[activeSeasonType].playoffs, currentRookies, seasons[activeSeasonType].deactivated);
+                {seasons[activeSeasonType].playoffs.champion && seasons[activeSeasonType].awards && (() => {
+                  // Read the snapshot advancePlayoffRound() froze the moment the Trophy
+                  // Final concluded — not a live recompute, which would drift the moment
+                  // any offseason step (Draft/Free Agency/Trades/Progression) mutates the
+                  // roster this same panel stays visible through.
+                  const awards = seasons[activeSeasonType].awards;
                   const AWARD_ROWS = [
                     ["Most Valuable Player", awards.mvp],
                     ["Offensive Player of the Year", awards.opoy],
@@ -1427,15 +1468,15 @@ export default function VPLLSimulator() {
                   <span className="vpll-champion-name vpll-team-name-row" style={{ fontSize: 20, justifyContent: "center" }}>
                     Corkum: <TeamLogo teamName={seasons.corkum.playoffs.champion} size={24} /> {seasons.corkum.playoffs.champion} · Culkin: <TeamLogo teamName={seasons.culkin.playoffs.champion} size={24} /> {seasons.culkin.playoffs.champion}
                   </span>
-                  {(() => {
-                    const cupChampion = Object.values(combinedCupStandings).sort((a, b) => b.points - a.points)[0]?.team;
-                    const davidson = computeDavidsonAward(cupChampion);
-                    return davidson && (
-                      <div className="vpll-team-name-row" style={{ marginTop: 8, fontSize: 13, justifyContent: "center", color: "var(--ink-soft)" }}>
-                        The Davidson Award (Commissioners Cup MVP): {davidson.name} ({POS_NAME[davidson.pos]}) — <TeamLogo teamName={davidson.team} size={16} /> {davidson.team}
-                      </div>
-                    );
-                  })()}
+                  {/* Read the snapshot advancePlayoffRound() froze the moment Culkin's Trophy
+                      Final concluded (the moment both seasons are final) — not a live recompute,
+                      which would drift the moment any offseason step mutates the roster this
+                      same banner stays visible through for the rest of the offseason window. */}
+                  {seasons.culkin.davidsonAward && (
+                    <div className="vpll-team-name-row" style={{ marginTop: 8, fontSize: 13, justifyContent: "center", color: "var(--ink-soft)" }}>
+                      The Davidson Award (Commissioners Cup MVP): {seasons.culkin.davidsonAward.name} ({POS_NAME[seasons.culkin.davidsonAward.pos]}) — <TeamLogo teamName={seasons.culkin.davidsonAward.team} size={16} /> {seasons.culkin.davidsonAward.team}
+                    </div>
+                  )}
                 </div>
 
                 {/* 1. Draft */}

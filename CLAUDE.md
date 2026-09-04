@@ -121,7 +121,11 @@ Current module layout:
   signals `simulation.js` itself uses — not a literal play-by-play, since this engine has no
   per-possession simulation, same as everything else here. `computeGameBoxScore()` is the one
   call site that runs all four for a single game, feeding both display and `playerStats`
-  accumulation below), `playerStats` (season + career individual leaderboards — goals, assists,
+  accumulation below. Every function also takes an optional `deactivated`/`deactivatedNames`
+  argument — a player sitting out the season on a Deactivation List never picks up a stat, the
+  same roster-exclusion `awards.js` already applies; App.jsx's `simulateWeek`/`simulateFullSeason`
+  and the headless harness's `simulateFullSeasonResults` both pass `season.deactivated` through
+  on every call), `playerStats` (season + career individual leaderboards — goals, assists,
   points, 2-point goals, face-off %, caused turnovers, save % — built from `boxScore.js`'s
   eager, guaranteed-complete-for-every-game attribution rather than the old on-click-only
   generation. `accumulateGameStats()` folds one game's box score into both a season-scoped store
@@ -198,6 +202,25 @@ one was explicitly snapshotted. If you refactor this into modules, **preserve a 
 clone of the original embedded data** before any mutation path can touch it. Currently this is
 `PRISTINE_YEAR1`, built via `JSON.parse(JSON.stringify(...))` at module load, before React even
 mounts. Don't lose this pattern in a refactor — it's what "Reset to Year 1" restores from.
+
+**A second, related gotcha this one enables**: anything that reads `TEAMS`/`PLAYERS_RAW`/`COACHES`
+live — `awards.js`'s functions, `boxScore.js`'s attribution — is only correct for *that instant*.
+The Offseason tab's own steps (Draft, Free Agency, Trades, Progression) mutate those same
+singletons before "Begin Year N+1" is clicked, and the Awards panel/Davidson Award banner stay
+visible on screen throughout that whole window. A real bug shipped from exactly this: `App.jsx`
+used to call `computeSeasonAwards()`/`computeDavidsonAward()` live, inline in the JSX render, so
+re-opening the Playoffs tab *after* running the Draft (or Free Agency, or Progression) silently
+recomputed the season's MVP/awards against the roster as it looks *now* — possibly a rookie who
+was never on the team during the season being awarded, or ratings the progression step had
+already changed — not what actually happened. The fix: compute awards exactly once, the moment
+they become decidable, and freeze them onto the season object from then on. `advancePlayoffRound()`
+does this — when a Trophy Final concludes it stores `season.awards` (and, for Culkin specifically,
+`season.davidsonAward`, since Culkin's Trophy Final always concludes after Corkum's and is the
+moment both seasons are final and the Commissioners Cup champion is knowable). Every read site
+(the Playoffs tab, the Offseason tab's Year Complete banner, the Hot Stove prompt builder) reads
+those stored fields — none of them call `computeSeasonAwards()`/`computeDavidsonAward()` directly
+anymore. If you add a new place that displays a past season's awards, read the stored snapshot;
+don't recompute live.
 
 ## Player data format
 
@@ -297,8 +320,10 @@ real automated suite instead of the fully-manual process this section used to de
   face-offs distribute to a real FOGO with the stronger team winning more over a large sample
   and never throwing when a team has none rostered, caused turnovers only ever land on
   Defense/Long-Stick Midfield, goalie saves/shots-faced/goals-allowed stay internally
-  consistent and `null` with no rostered goalie, and `computeGameBoxScore()`'s combined shape),
-  `playerId.test.js` (`mintPlayerId()` uniqueness over a large sample, and
+  consistent and `null` with no rostered goalie, `computeGameBoxScore()`'s combined shape, and
+  that a deactivated player never picks up a goal/assist/face-off/caused-turnover/goalie stat
+  in any of the four attribution functions), `playerId.test.js` (`mintPlayerId()` uniqueness
+  over a large sample, and
   `bootstrapPlayerIdsIfNeeded()`'s backfill-without-overwrite migration), and
   `playerStats.test.js` (`accumulateGameStats()` sums goals/assists/face-offs/turnovers/goalie
   lines into both the season store and `CAREER_STATS`, two different players who happen to

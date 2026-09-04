@@ -13,7 +13,13 @@ import { POSITION_MINIMUMS } from "./roster.js";
    simulation, not individual players — see CLAUDE.md), so deactivation's
    real mechanical effect is scoped to what the roster-aggregate model can
    actually express: a deactivated player is excluded from that season's
-   awards eligibility (src/engine/awards.js) and shown as inactive in the UI.
+   awards eligibility (src/engine/awards.js) *and* from that season's box
+   score attribution (src/engine/boxScore.js's computeGameBoxScore(), fed
+   by season.deactivated) — so they can't accumulate goals/assists/face-offs/
+   turnovers/saves for a season they're sitting out either. There's no
+   roster-browsing UI anywhere in the app (see CLAUDE.md), so this doesn't
+   currently surface as a visible "inactive" tag anywhere — only as an
+   absence from awards and stat leaderboards.
 
    Selection uses each player's own Indoor/Outdoor Balance field (tuple
    index 7, same 1-10 scale as the team-level bal rating) — a genuine

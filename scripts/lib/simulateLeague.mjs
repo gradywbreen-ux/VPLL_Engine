@@ -39,6 +39,7 @@ import { assignHometown } from "../../src/engine/hometown.js";
 import { mintPlayerId } from "../../src/engine/playerId.js";
 import { computeGameBoxScore } from "../../src/engine/boxScore.js";
 import { accumulateGameStats } from "../../src/engine/playerStats.js";
+import { computeAllDeactivations } from "../../src/engine/deactivation.js";
 
 /* ---------- Season + playoffs, one season type, fully to completion ---------- */
 function simulateFullSeasonResults(schedule, isIndoor) {
@@ -46,6 +47,9 @@ function simulateFullSeasonResults(schedule, isIndoor) {
   const seasonStats = {}; // thrown away — this harness has no UI leaderboard, but every game
                            // still runs box-score attribution so CAREER_STATS (and this code
                            // path itself) get exercised the same way the app's does.
+  // Deactivation Lists (Master File 9.8) — decided once per season, same as App.jsx's
+  // startNewSeason, so a deactivated player's stats never accumulate here either.
+  const deactivated = computeAllDeactivations(isIndoor);
   for (let w = 1; w <= 13; w++) {
     const weekGames = schedule.filter((g) => g.week === w);
     const gamesPlayedThisWeek = {};
@@ -53,7 +57,7 @@ function simulateFullSeasonResults(schedule, isIndoor) {
       const homeFatigued = (gamesPlayedThisWeek[g.home] || 0) >= 1;
       const awayFatigued = (gamesPlayedThisWeek[g.away] || 0) >= 1;
       const res = simulateGame(g.home, g.away, isIndoor, homeFatigued, awayFatigued);
-      const box = computeGameBoxScore(g.home, g.away, isIndoor, res);
+      const box = computeGameBoxScore(g.home, g.away, isIndoor, res, deactivated);
       accumulateGameStats(seasonStats, box, g.home, g.away);
       results[g.id] = {
         homeScore: res.homeScore, awayScore: res.awayScore, ot: !!res.ot,

@@ -18,11 +18,26 @@ import { computeFaceoff } from "./simulation.js";
    who plausibly produced a real team-level outcome, seeded fresh per game
    (see computeGameBoxScore below) so a season's leaderboard reflects a
    genuine accumulation, not just per-view flavor text.
+
+   Every function below takes an optional `deactivatedNames` array — a
+   player sitting out the season on a Deactivation List (Master File 9.8,
+   src/engine/deactivation.js) never picks up a stat, the same way they're
+   already excluded from that season's awards (awards.js). Without this,
+   a deactivated player could still top the season leaderboard for a
+   season they supposedly didn't play — the same roster the rest of the
+   season respects has to be the one stats are attributed from too.
    ============================================================ */
 export const SCORER_WEIGHT = { A: 3.0, M: 2.0, L: 0.8, D: 0.4, F: 0.25, G: 0.02 };
 
-export function attributeGoals(teamName, goalCount, hasTwoPointGoal) {
+function activeRosterFor(teamName, deactivatedNames) {
   const roster = playersFor(teamName);
+  if (!deactivatedNames || !deactivatedNames.length) return roster;
+  const active = roster.filter((p) => !deactivatedNames.includes(p.name));
+  return active.length ? active : roster; // POSITION_MINIMUMS guarantees this never actually happens
+}
+
+export function attributeGoals(teamName, goalCount, hasTwoPointGoal, deactivatedNames) {
+  const roster = activeRosterFor(teamName, deactivatedNames);
   const eligible = roster.filter((p) => p.pos !== "G" || Math.random() < 0.02);
   const scorers = [];
   for (let i = 0; i < goalCount; i++) {
@@ -66,13 +81,13 @@ function bumpFaceoff(store, player, won) {
   if (won) store[player.name].won++;
 }
 
-export function attributeFaceoffs(homeTeam, awayTeam, isIndoor) {
+export function attributeFaceoffs(homeTeam, awayTeam, isIndoor, deactivated) {
   const total = FACEOFFS_PER_GAME[isIndoor ? "indoor" : "outdoor"];
   const homeStrength = computeFaceoff(TEAMS[homeTeam]);
   const awayStrength = computeFaceoff(TEAMS[awayTeam]);
   const pHome = homeStrength / (homeStrength + awayStrength || 1);
-  const homeFogos = playersFor(homeTeam).filter((p) => p.pos === "F");
-  const awayFogos = playersFor(awayTeam).filter((p) => p.pos === "F");
+  const homeFogos = activeRosterFor(homeTeam, deactivated?.[homeTeam]).filter((p) => p.pos === "F");
+  const awayFogos = activeRosterFor(awayTeam, deactivated?.[awayTeam]).filter((p) => p.pos === "F");
   const homeStats = {}, awayStats = {};
   for (let i = 0; i < total; i++) {
     const homeWon = Math.random() < pHome;
@@ -112,11 +127,11 @@ function distributeTurnovers(count, defenders) {
   return Object.values(store);
 }
 
-export function attributeCausedTurnovers(homeTeam, awayTeam, isIndoor) {
+export function attributeCausedTurnovers(homeTeam, awayTeam, isIndoor, deactivated) {
   const homeCT = causedTurnoverCount(homeTeam, awayTeam, isIndoor); // home defense vs. away's ball control
   const awayCT = causedTurnoverCount(awayTeam, homeTeam, isIndoor);
-  const homeDefenders = playersFor(homeTeam).filter((p) => p.pos === "D" || p.pos === "L");
-  const awayDefenders = playersFor(awayTeam).filter((p) => p.pos === "D" || p.pos === "L");
+  const homeDefenders = activeRosterFor(homeTeam, deactivated?.[homeTeam]).filter((p) => p.pos === "D" || p.pos === "L");
+  const awayDefenders = activeRosterFor(awayTeam, deactivated?.[awayTeam]).filter((p) => p.pos === "D" || p.pos === "L");
   return { home: distributeTurnovers(homeCT, homeDefenders), away: distributeTurnovers(awayCT, awayDefenders) };
 }
 
@@ -136,22 +151,25 @@ function estimateShotsFaced(offTeamName, isIndoor, goalsAllowed) {
   return Math.max(shots, goalsAllowed + Math.round(rand(3, 10)));
 }
 
-export function attributeGoalieStats(teamName, opponentTeamName, goalsAllowed, isIndoor) {
-  const goalies = playersFor(teamName).filter((p) => p.pos === "G");
+export function attributeGoalieStats(teamName, opponentTeamName, goalsAllowed, isIndoor, deactivatedNames) {
+  const goalies = activeRosterFor(teamName, deactivatedNames).filter((p) => p.pos === "G");
   if (!goalies.length) return null;
   const starter = pickWeighted(goalies, (p) => p.ovr + (p.durability || 0) * 0.1);
   const shotsFaced = estimateShotsFaced(opponentTeamName, isIndoor, goalsAllowed);
   return { name: starter.name, id: starter.id, pos: "G", saves: shotsFaced - goalsAllowed, shotsFaced, goalsAllowed };
 }
 
-/* ---------- One call per game, for both display and season/career accumulation ---------- */
-export function computeGameBoxScore(homeTeam, awayTeam, isIndoor, result) {
-  const homeGoals = attributeGoals(homeTeam, result.homeScore, !!result.homeTwoPointGoal);
-  const awayGoals = attributeGoals(awayTeam, result.awayScore, !!result.awayTwoPointGoal);
-  const faceoffs = attributeFaceoffs(homeTeam, awayTeam, isIndoor);
-  const turnovers = attributeCausedTurnovers(homeTeam, awayTeam, isIndoor);
-  const homeGoalie = attributeGoalieStats(homeTeam, awayTeam, result.awayScore, isIndoor); // home goalie allowed awayScore
-  const awayGoalie = attributeGoalieStats(awayTeam, homeTeam, result.homeScore, isIndoor);
+/* ---------- One call per game, for both display and season/career accumulation ----------
+   deactivated: optional { team: [names] } for the season this game belongs to (App.jsx's
+   season.deactivated, from src/engine/deactivation.js) — every attribution below excludes
+   anyone on it, same as awards.js already does. */
+export function computeGameBoxScore(homeTeam, awayTeam, isIndoor, result, deactivated) {
+  const homeGoals = attributeGoals(homeTeam, result.homeScore, !!result.homeTwoPointGoal, deactivated?.[homeTeam]);
+  const awayGoals = attributeGoals(awayTeam, result.awayScore, !!result.awayTwoPointGoal, deactivated?.[awayTeam]);
+  const faceoffs = attributeFaceoffs(homeTeam, awayTeam, isIndoor, deactivated);
+  const turnovers = attributeCausedTurnovers(homeTeam, awayTeam, isIndoor, deactivated);
+  const homeGoalie = attributeGoalieStats(homeTeam, awayTeam, result.awayScore, isIndoor, deactivated?.[homeTeam]); // home goalie allowed awayScore
+  const awayGoalie = attributeGoalieStats(awayTeam, homeTeam, result.homeScore, isIndoor, deactivated?.[awayTeam]);
   return {
     home: { goals: homeGoals, faceoffs: faceoffs.home, turnovers: turnovers.home, goalie: homeGoalie },
     away: { goals: awayGoals, faceoffs: faceoffs.away, turnovers: turnovers.away, goalie: awayGoalie },
