@@ -211,7 +211,7 @@ Current module layout:
 - `test/` — `data-integrity.test.js`, `multi-year-parity.test.js`, `playoff-tiebreakers.test.js`,
   `draft-lottery.test.js`, `roster-caps.test.js`, `player-pool.test.js`, `free-agency-tiers.test.js`,
   `awards.test.js`, `hometown.test.js`, `deactivation.test.js`, `boxScore.test.js`,
-  `playerId.test.js`, `playerStats.test.js`, `saveTransfer.test.js`
+  `playerId.test.js`, `playerStats.test.js`, `saveTransfer.test.js`, `ratings.test.js`
 
 `npm run dev` / `npm run build` both work; see "Testing workflow" below for `npm test`.
 
@@ -373,7 +373,21 @@ real automated suite instead of the fully-manual process this section used to de
   is ignored rather than rejecting the whole file — the one piece of the export/import
   feature pure enough to unit test without a real browser; `buildLeagueSaveExport()`/
   `applyLeagueSave()` go through `storage.js`'s real localStorage and are verified by
-  hand/Playwright instead). All run in well under a second combined.
+  hand/Playwright instead), and `ratings.test.js` (the roster→rating feedback loop —
+  `avgOverallByPosition()`'s per-position averages, `pullRatingsTowardRoster()` pulling a
+  position's subcats up for a strong roster group and down for a weak one by exactly the
+  documented `ROSTER_PULL_WEIGHT` blend, leaving a position's subcats untouched when
+  nobody's rostered there, and — the specific bug class the module's own header comment
+  warns about — that `team.score` is pulled toward roster strength *relative* to the
+  league-wide average rather than the raw roster-overall number, including a regression
+  test that recomputes the exact formula and a same-starting-score/opposite-roster-
+  strength comparison. Also proves the task #50 manual moves actually reach this
+  mechanism: a `manualCutPlayer()`/`manualSignFromPool()` call followed by
+  `pullRatingsTowardRoster()` — the same call `applyLeagueProgression()` makes for every
+  team when "Apply Progression" runs — measurably moves the affected position's subcats
+  in the right direction, verified both by these unit tests and by a Playwright pass
+  cutting a real player through the actual UI and confirming that team's row in the
+  Progression panel shows a real score delta). All run in well under a second combined.
 - **`npm run simulate:years [n]`** — `scripts/simulate-years.mjs`, a headless CLI that runs a
   real N-year league simulation (default 16) and prints a benchmark report: rating SD range,
   coach firing rate, top-5/bottom-5 team turnover, champion diversity. This is the formalized,
