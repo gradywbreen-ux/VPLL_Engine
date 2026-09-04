@@ -87,7 +87,9 @@ export function subtractSeasonFromCareer(seasonStats) {
 export function foPct(line) { return line.foTotal > 0 ? line.foWon / line.foTotal : 0; }
 export function savePct(line) { return line.sa > 0 ? line.sv / line.sa : 0; }
 
-const MIN_FOR_RATE_LEADERBOARD = { foTotal: 20, sa: 20 }; // a token handful of attempts before a rate stat is meaningful
+// A token handful of attempts before a rate stat is meaningful — exported so awards.js's
+// Most Outstanding Goalie can apply the exact same floor rather than a second magic number.
+export const MIN_FOR_RATE_LEADERBOARD = { foTotal: 20, sa: 20 };
 
 export function topByStat(statStore, statKey, { positions = null, n = 10 } = {}) {
   let lines = Object.values(statStore);

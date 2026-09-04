@@ -311,7 +311,7 @@ export default function VPLLSimulator() {
     // whatever the roster happens to look like *now* instead of what actually happened
     // in the season being awarded.
     if (round === "trophyFinal" && playoffs.champion) {
-      newSeasonObj.awards = computeSeasonAwards(table, playoffs, currentRookies, season.deactivated);
+      newSeasonObj.awards = computeSeasonAwards(table, playoffs, currentRookies, season.deactivated, season.playerStats);
       // Culkin's Trophy Final always concludes after Corkum's (Culkin can't even start
       // until Corkum has a champion — see culkinUnlocked), so this is always the moment
       // both seasons' results are final and the Commissioners Cup champion — and the

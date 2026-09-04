@@ -95,13 +95,29 @@ Current module layout:
   `awards` (Master File
   Section 10 — MVP, Offensive/Defensive Player of the Year, Most Outstanding Goalie, Rookie of
   the Year, Coach of the Year, both Trophy Finals MVPs, the Davidson Award (Commissioners Cup
-  MVP), and First/Second Team All-VPLL + All-Rookie Team. Built entirely from signals the engine
-  already tracks — overall/star/leadership/balance, team subcategory ratings, roster tag, coach
-  archetype, actual standings/playoff results — not from season-long individual stats
-  (goals/assists), which didn't exist anywhere in this engine when this module was built (see
-  `playerStats` below, which now provides them — `awards.js` predates it and hasn't been
-  revisited to use it); every award is a genuine proxy for what the doc describes, not a
-  fabricated stand-in for a missing signal. Comeback Player of the Year is
+  MVP), and First/Second Team All-VPLL + All-Rookie Team. Originally built entirely from
+  ratings — overall/star/leadership/balance, team subcategory ratings, roster tag, coach
+  archetype, actual standings/playoff results — since `playerStats.js`'s season-long individual
+  stats (goals/assists) didn't exist anywhere in this engine when this module was first built.
+  Now revisited to actually consume them: Offensive/Defensive Player of the Year and Most
+  Outstanding Goalie use a "gate, then rank" pattern — first shortlist to the season's real top
+  `STAT_GATE_SIZE` (5) producers at the position (points for OPOY, caused turnovers for DPOY,
+  save% for MOG, ties included, so the award can never go to someone outside the league's actual
+  statistical elite), *then* pick the best of that shortlist by overall + team-context rating,
+  with the same real stat weighted heavily (`STAT_AWARD_WEIGHT`, scaled per stat since save% is
+  a 0-1 ratio and points/turnovers are small integer counts) so production keeps mattering
+  within the shortlist too, not just as the gate. MVP and Rookie of the Year fold in the same
+  real points as a modest bonus (`PRODUCTION_BONUS_WEIGHT`) rather than a gate, since both span
+  every position and a shutdown defender or standout goalie shouldn't need scoring numbers to
+  compete. All-VPLL/All-Rookie Team selection applies the same per-position stat weighting
+  (points for A/M, caused turnovers for D/L, save% for G — FOGO has no equivalent stat in this
+  engine, so it stays rating-only) without a hard gate, since a full lineup needs an exact
+  position count regardless of who's produced. `seasonStats` (`season.playerStats`) is optional
+  everywhere and every gate falls open when it's absent or every candidate ties at zero, so an
+  early stat-less moment (or a test with no game history) still behaves like the original
+  ratings-only version. The Trophy Finals MVP and Davidson Award deliberately stay
+  ratings/tiebreak-only — `playerStats.js` is scoped to regular-season games only, so there's no
+  honest playoff production number to rank a postseason-scoped award on. Comeback Player of the Year is
   **still not** implemented — it needs multi-year per-player history, which didn't exist
   anywhere on the player tuple or elsewhere when this module was built, and `deactivation.js`
   doesn't fill that gap either. `playerStats.js`'s `CAREER_STATS` (below) now gives a real,
@@ -308,8 +324,12 @@ real automated suite instead of the fully-manual process this section used to de
   real embedded player can never accidentally win a test by coincidence — position filters for
   OPOY/DPOY/MOG, the MVP context bonus actually favoring a weaker team, Coach of the Year's
   overachievement math, the Davidson Award's balance-eligibility filter and its full-roster
-  fallback, All-VPLL/All-Rookie Team composition and no player appearing on both teams, and that
-  a `deactivated` player is excluded from every award scoped to that season), `hometown.test.js`
+  fallback, All-VPLL/All-Rookie Team composition and no player appearing on both teams, that a
+  `deactivated` player is excluded from every award scoped to that season, that OPOY/DPOY favor
+  a real top producer over a much-higher-overall non-producer once `seasonStats` exists, that a
+  non-producer can never sneak an OPOY win via overall alone when real producers exist ("gate,
+  then rank"), that MOG's save% gate ignores a fluky small sample below the shared attempts
+  floor, and that MVP's production bonus can tip a genuinely close race), `hometown.test.js`
   (`MARKET_TIER` covers all 32 real teams exactly once, `assignHometown()` always returns a real
   team and weights Tier 1 above Tier 3 over a large sample, `bootstrapHometownsIfNeeded()`
   backfills missing hometowns on rostered/pooled players without ever overwriting an existing

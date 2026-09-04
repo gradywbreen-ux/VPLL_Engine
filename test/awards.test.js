@@ -10,6 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { TEAM_NAMES, PLAYERS_RAW, TEAMS, COACHES } from "../src/data/rawData.js";
+import { emptyStatLine } from "../src/engine/playerStats.js";
 import {
   computeMVP, computeOffensivePlayerOfTheYear, computeDefensivePlayerOfTheYear,
   computeMostOutstandingGoalie, computeRookieOfTheYear, computeCoachOfTheYear,
@@ -19,9 +20,19 @@ import {
 const TEAM = "Saint Albans Dawnlanders";
 const TEAM_B = "Milton Machine"; // a second real team, for tests needing two controlled rosters
 
-// player tuple: [name, pos, hand, age, overall, star, leadership, balance, durability, aav, yearsRemaining, contractType, ceiling]
-function makePlayer(name, pos, overall, { star = 0, bal = 5 } = {}) {
-  return [name, pos, "R", 26, overall, star, 50, bal, 60, 20000, 3, "S", null];
+// player tuple: [name, pos, hand, age, overall, star, leadership, balance, durability, aav, yearsRemaining, contractType, ceiling, hometown, id]
+// id defaults to the player's own name — unique enough within a single test's controlled league.
+function makePlayer(name, pos, overall, { star = 0, bal = 5, id = name } = {}) {
+  return [name, pos, "R", 26, overall, star, 50, bal, 60, 20000, 3, "S", null, null, id];
+}
+
+// A season.playerStats-shaped store from a list of { id, name, team, pos, ...statOverrides }.
+function seasonStatsFrom(lines) {
+  const store = {};
+  for (const { id, name, team, pos, ...overrides } of lines) {
+    store[id] = { ...emptyStatLine(id, name, team, pos), ...overrides };
+  }
+  return store;
 }
 
 // Deliberately low-overall, no-star filler covering every position — used on every team not
@@ -242,4 +253,76 @@ test("computeAllVPLLTeams and computeAllRookieTeam exclude deactivated players f
     const names = firstTeam.map((p) => `${p.team} ${p.name}`);
     assert.ok(!names.includes(`${TEAM_NAMES[0]} Filler 10`));
   });
+});
+
+/* ---------- Stat-informed awards (season.playerStats) ---------- */
+
+test("computeOffensivePlayerOfTheYear favors a real top scorer over a much-higher-overall non-producer once stats exist", () => {
+  withControlledLeague(
+    { [TEAM]: [makePlayer("High Overall No Points", "A", 95, { id: "hi1" }), makePlayer("Real Top Scorer", "A", 65, { id: "scorer1" })] },
+    () => {
+      const seasonStats = seasonStatsFrom([{ id: "scorer1", name: "Real Top Scorer", team: TEAM, pos: "A", pts: 50 }]);
+      const opoy = computeOffensivePlayerOfTheYear(null, seasonStats);
+      assert.equal(opoy.name, "Real Top Scorer", "real season production should decide once it exists, not raw overall alone");
+    }
+  );
+});
+
+test("computeDefensivePlayerOfTheYear favors a real top caused-turnover producer over a much-higher-overall non-producer", () => {
+  withControlledLeague(
+    { [TEAM]: [makePlayer("High Overall No Turnovers", "D", 88, { id: "hi1" }), makePlayer("Real Top Defender", "D", 60, { id: "def1" })] },
+    () => {
+      const seasonStats = seasonStatsFrom([{ id: "def1", name: "Real Top Defender", team: TEAM, pos: "D", ct: 40 }]);
+      const dpoy = computeDefensivePlayerOfTheYear(null, seasonStats);
+      assert.equal(dpoy.name, "Real Top Defender");
+    }
+  );
+});
+
+test("computeOffensivePlayerOfTheYear never lets a non-producer sneak the win via overall when real producers exist ('gate, then rank')", () => {
+  const scorers = [50, 45, 40, 35, 30].map((pts, i) => makePlayer(`Scorer${i + 1}`, "A", 60, { id: `s${i + 1}` }));
+  const nonProducer = makePlayer("Non Producer High Overall", "A", 99, { id: "np1" });
+  withControlledLeague({ [TEAM]: [...scorers, nonProducer] }, () => {
+    const seasonStats = seasonStatsFrom(
+      [50, 45, 40, 35, 30].map((pts, i) => ({ id: `s${i + 1}`, name: `Scorer${i + 1}`, team: TEAM, pos: "A", pts }))
+    );
+    const opoy = computeOffensivePlayerOfTheYear(null, seasonStats);
+    assert.notEqual(opoy.name, "Non Producer High Overall", "a player outside the real top-5 in points should never win, however high their overall");
+    assert.equal(opoy.name, "Scorer1", "the actual top producer (also tied on overall here) should win");
+  });
+});
+
+test("computeMostOutstandingGoalie ignores a save% built on too small a sample (below the Stats tab's own attempts floor)", () => {
+  withControlledLeague(
+    {
+      [TEAM]: [
+        makePlayer("Fluky Small Sample", "G", 90, { id: "fluky1" }), // "perfect" record, but on far too few shots to mean anything
+        makePlayer("Real Starter", "G", 55, { id: "starter1" }),
+      ],
+    },
+    () => {
+      const seasonStats = seasonStatsFrom([
+        { id: "fluky1", name: "Fluky Small Sample", team: TEAM, pos: "G", sv: 3, sa: 3 }, // 100% on 3 shots
+        { id: "starter1", name: "Real Starter", team: TEAM, pos: "G", sv: 18, sa: 25 }, // 72% on a real sample
+      ]);
+      const mog = computeMostOutstandingGoalie(null, seasonStats);
+      assert.equal(mog.name, "Real Starter", "a tiny-sample 'perfect' save% shouldn't beat a real starter's real season");
+    }
+  );
+});
+
+test("computeMVP's production bonus can tip a close race between comparable players on the same team", () => {
+  withControlledLeague(
+    {
+      [TEAM]: [
+        makePlayer("Higher Points Lower Overall", "M", 70, { id: "p1" }),
+        makePlayer("Lower Points Higher Overall", "M", 71, { id: "p2" }),
+      ],
+    },
+    () => {
+      const seasonStats = seasonStatsFrom([{ id: "p1", name: "Higher Points Lower Overall", team: TEAM, pos: "M", pts: 20 }]);
+      const mvp = computeMVP(null, seasonStats);
+      assert.equal(mvp.name, "Higher Points Lower Overall", "a real production edge should be able to overcome a 1-point overall gap");
+    }
+  );
 });
