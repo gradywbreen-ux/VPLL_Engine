@@ -6,7 +6,7 @@ import {
 import { migrateLSMIfNeeded } from "./data/migrations.js";
 import { resetLeagueDataToYear1 } from "./data/reset.js";
 import { formatMoney, rand } from "./engine/mathHelpers.js";
-import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, teamPayroll, capFine, bootstrapContractsIfNeeded } from "./engine/contracts.js";
+import { SALARY_CAP, CONTRACT_TYPES, assignNewContract, bootstrapContractsIfNeeded } from "./engine/contracts.js";
 import { simulateGame } from "./engine/simulation.js";
 import { attributeGoals, computeGameBoxScore } from "./engine/boxScore.js";
 import { accumulateGameStats, subtractSeasonFromCareer, topByStat } from "./engine/playerStats.js";
@@ -46,6 +46,7 @@ import { StandingsTable } from "./components/StandingsTable.jsx";
 import { Article } from "./components/Article.jsx";
 import { CombinedCupTable } from "./components/CombinedCupTable.jsx";
 import { TeamLogo } from "./components/TeamLogo.jsx";
+import { SalaryCapTable } from "./components/SalaryCapTable.jsx";
 
 export default function VPLLSimulator() {
   const [activeTab, setActiveTab] = useState("exhibition");
@@ -1332,29 +1333,7 @@ export default function VPLLSimulator() {
                   <>
                     <div className="vpll-h2">Salary Cap — Soft Cap {formatMoney(SALARY_CAP)}</div>
                     <div className="vpll-info-banner">Teams may exceed the cap but face escalating fines: 5-10% over → 25% of overage, 10-20% → 50%, 20-30% → 100%, 30%+ → 200%.</div>
-                    <table className="vpll-standings-table">
-                      <thead>
-                        <tr><th>Team</th><th className="num">Roster</th><th className="num">Payroll</th><th className="num">% of Cap</th><th className="num">Fine</th></tr>
-                      </thead>
-                      <tbody>
-                        {TEAM_NAMES.map((t) => teamPayroll(t)).length > 0 && TEAM_NAMES
-                          .map((t) => ({ t, payroll: teamPayroll(t), roster: PLAYERS_RAW[t].length }))
-                          .sort((a, b) => b.payroll - a.payroll)
-                          .map((row) => {
-                            const fine = capFine(row.payroll);
-                            const pct = (row.payroll / SALARY_CAP) * 100;
-                            return (
-                              <tr key={row.t}>
-                                <td><div className="vpll-team-name-row"><TeamLogo teamName={row.t} size={20} />{row.t}</div></td>
-                                <td className="num">{row.roster}</td>
-                                <td className="num">{formatMoney(row.payroll)}</td>
-                                <td className="num">{pct.toFixed(1)}%</td>
-                                <td className="num cup-col">{fine > 0 ? formatMoney(fine) : "—"}</td>
-                              </tr>
-                            );
-                          })}
-                      </tbody>
-                    </table>
+                    <SalaryCapTable />
                   </>
                 )}
 
@@ -1492,6 +1471,19 @@ export default function VPLLSimulator() {
                   })}
                 </div>
               )}
+            </div>
+
+            <div className="vpll-week-block" style={{ marginBottom: 18 }}>
+              <div className="vpll-week-label">Team Payrolls vs. Salary Cap — Soft Cap {formatMoney(SALARY_CAP)}</div>
+              <div className="vpll-info-banner">
+                Live — updates the instant the Draft, Free Agency, Trades, the Manual Trade
+                Override, or the Commissioner's Roster Moves below change a roster. Teams may
+                exceed the cap but face escalating fines: 5-10% over → 25% of overage,
+                10-20% → 50%, 20-30% → 100%, 30%+ → 200%.
+              </div>
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                <SalaryCapTable />
+              </div>
             </div>
 
             {!bothTrophiesDecided && (

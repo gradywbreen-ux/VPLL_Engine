@@ -185,7 +185,16 @@ Current module layout:
   render-time exception anywhere in the tree took the whole app to a blank white screen with no
   recovery path. The fallback offers Reload and a "Clear saved data & reload" action — the same
   storage keys `resetLeagueToYear1` already deletes — for the specific case of a crash caused by
-  corrupted local save data, where a plain reload would just crash again)
+  corrupted local save data, where a plain reload would just crash again), `SalaryCapTable`
+  (every team's roster size, payroll, % of cap, and overage fine — reads `TEAM_NAMES`/
+  `PLAYERS_RAW`/`contracts.js`'s `teamPayroll()`/`capFine()` live on every render rather than
+  from props, so it's always accurate with zero extra wiring, not just where it was first used
+  (the Standings tab's "Salary Cap" view). Also embedded directly in the Offseason tab, right
+  after the Player Pool block and above every offseason step, so the Commissioner can watch
+  payrolls move in real time as the Draft, Free Agency, Trades, the Manual Trade Override, and
+  the Commissioner's Roster Moves (task #50) each mutate rosters — unlike the awards/box-score
+  "second gotcha" above, live-reading is the *correct* behavior here, since payroll should
+  always describe the roster as it stands right now, not a frozen past moment)
 - `src/styles/styles.js` — the CSS-in-JS design system
 - `src/storage.js` — localStorage-backed replacement for `window.storage`, same key names
 - `src/saveTransfer.js` — league save export/import (task #52). Persistence is entirely
